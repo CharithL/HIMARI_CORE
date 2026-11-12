@@ -1,8 +1,9 @@
 """Tests for config loading, validation, and hashing."""
 
+import subprocess
 from pathlib import Path
 
-from himari.core.config import code_hash, config_hash, load_config
+from himari.core.config import code_hash, config_hash, load_config, tracked_py_files
 
 CONFIG_PATH = Path(__file__).parents[2] / "config" / "frozen_v1.yaml"
 
@@ -71,6 +72,26 @@ class TestConfigHashing:
         assert len(h) == 64
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _make_repo(root: Path, files: dict[str, bytes]) -> Path:
+    root.mkdir()
+    _git(root, "init", "-q")
+    for rel, content in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    _git(root, "add", *files)
+    return root
+
+
 class TestCodeHash:
     def test_code_hash_deterministic(self) -> None:
         src = Path(__file__).parents[2] / "src" / "himari"
@@ -82,3 +103,32 @@ class TestCodeHash:
         src = Path(__file__).parents[2] / "src" / "himari"
         h = code_hash(src)
         assert len(h) == 64
+
+    def test_crlf_and_lf_checkouts_hash_equal(self, tmp_path: Path) -> None:
+        """A Windows (CRLF) checkout and a Linux (LF) checkout give the same hash."""
+        lf = _make_repo(tmp_path / "lf", {"pkg/a.py": b"x = 1\ny = 2\n"})
+        crlf = _make_repo(tmp_path / "crlf", {"pkg/a.py": b"x = 1\r\ny = 2\r\n"})
+        assert code_hash(lf) == code_hash(crlf)
+
+    def test_untracked_files_are_excluded(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path / "r", {"a.py": b"x = 1\n"})
+        before = code_hash(repo)
+        (repo / "scratch.py").write_bytes(b"debug = True\n")
+        assert code_hash(repo) == before
+
+    def test_content_change_changes_hash(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path / "r", {"a.py": b"x = 1\n"})
+        before = code_hash(repo)
+        (repo / "a.py").write_bytes(b"x = 2\n")
+        assert code_hash(repo) != before
+
+    def test_path_is_part_of_hash(self, tmp_path: Path) -> None:
+        a = _make_repo(tmp_path / "a", {"one.py": b"x = 1\n"})
+        b = _make_repo(tmp_path / "b", {"two.py": b"x = 1\n"})
+        assert code_hash(a) != code_hash(b)
+
+    def test_tracked_set_matches_git(self) -> None:
+        src = Path(__file__).parents[2] / "src" / "himari"
+        files = tracked_py_files(src)
+        assert "core/config.py" in files
+        assert all("\\" not in f for f in files)

@@ -1,9 +1,9 @@
 # Secrets
 .env
 
-# Data and state (large, local)
-data/
-state/
+# Data and state (large, local) — anchored so src/himari/data/ stays tracked
+/data/
+/state/
 
 # Research reports (generated)
 research/reports/*.html

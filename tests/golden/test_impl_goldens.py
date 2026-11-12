@@ -155,12 +155,10 @@ class TestConfigHashGoldens:
         for name, h in hashes.items():
             assert len(h) == 64, f"{name} hash wrong length"
 
-    def test_code_hash_crlf_invariant(self) -> None:
-        """code_hash normalizes CRLF→LF so Windows and CI agree."""
+    def test_code_hash_stable(self) -> None:
+        """CRLF/untracked-file behaviour is covered in tests/unit/test_config.py."""
         src = PROJECT_ROOT / "src" / "himari"
-        h1 = code_hash(src)
-        h2 = code_hash(src)
-        assert h1 == h2
+        assert code_hash(src) == code_hash(src)
 
 
 class TestResearchWindowsTyped:

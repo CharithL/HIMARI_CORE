@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -233,18 +234,30 @@ def config_hash(path: Path) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def code_hash(src_dir: Path) -> str:
-    """SHA-256 hash of all .py files under src_dir, sorted by POSIX path.
+def tracked_py_files(src_dir: Path) -> list[str]:
+    """Git-tracked .py files under src_dir, as sorted POSIX paths relative to it."""
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "--", "*.py"],
+            cwd=src_dir,
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(f"code_hash needs a git checkout: {src_dir}") from exc
+    return sorted(p for p in out.decode("utf-8").split("\0") if p)
 
-    Normalizes CRLF → LF so Windows and CI produce the same hash.
-    Paths use forward slashes regardless of platform.
+
+def code_hash(src_dir: Path) -> str:
+    """SHA-256 over the git-tracked .py files under src_dir.
+
+    Untracked files are excluded so a local checkout and CI hash the same set.
+    CRLF is normalized to LF so Windows and Linux agree on content.
     """
     h = hashlib.sha256()
-    py_files = sorted(src_dir.rglob("*.py"))
-    for p in py_files:
-        rel = p.relative_to(src_dir).as_posix()
-        h.update(rel.encode("utf-8"))
-        content = p.read_bytes().replace(b"\r\n", b"\n")
+    for rel in tracked_py_files(src_dir):
+        content = (src_dir / rel).read_bytes().replace(b"\r\n", b"\n")
+        h.update(f"{rel}\0{len(content)}\0".encode())
         h.update(content)
     return h.hexdigest()
 
