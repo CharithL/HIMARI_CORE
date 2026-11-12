@@ -39,7 +39,8 @@ UNIVERSE: dict[str, tuple[str, float, float, float, str | None, float]] = {
 SPLITS = {("VIU", date(2025, 6, 16)): 2.0}
 ZERO_VOLUME = {("VGV", date(2025, 8, 14))}
 
-# Synthetic Bank of Canada holidays (chosen to exercise Easter bridges, Remembrance Day, etc.)
+# Synthetic Bank of Canada closures: the synthetic FX/CORRA publication record skips these
+# weekdays (chosen to exercise Easter bridges, Remembrance Day, etc.)
 BOC_HOLIDAYS = {
     2024: [
         "01-01",
@@ -189,15 +190,6 @@ def main() -> None:
         )
         corra.append([d.isoformat(), f"{base + rng.normal(0.0, 0.01):.2f}"])
     _write(ROOT / "primary" / "series" / "AVG.INTWO.csv", ["date", "value"], corra)
-
-    lines = [
-        "# SYNTHETIC test calendar for tests/fixtures/market (not the Bank's real holidays).",
-        "covered_years: [2024, 2025]",
-        "holidays:",
-    ]
-    for y, mds in BOC_HOLIDAYS.items():
-        lines += [f"  - {{date: {y}-{md}, name: synthetic, scope: national}}" for md in mds]
-    (ROOT / "boc_holidays.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

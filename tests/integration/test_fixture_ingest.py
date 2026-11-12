@@ -10,8 +10,14 @@ import pytest
 from himari.accounting.indices import total_return_index
 from himari.core.config import load_config
 from himari.core.types import Currency, QualityFlag
-from himari.data.calendars import last_completed_session, load_boc_holidays, release_utc
-from himari.data.ingest import SeriesNames, ingest_actions, ingest_bars, ingest_series_source
+from himari.data.calendars import last_completed_session, release_utc
+from himari.data.ingest import (
+    SeriesNames,
+    boc_calendar,
+    ingest_actions,
+    ingest_bars,
+    ingest_series_source,
+)
 from himari.data.sources import CsvSource
 from himari.data.storage import ACTIONS, BARS, SERIES, VersionedStore
 from himari.quality.checks import Severity
@@ -33,12 +39,13 @@ GOLDEN_CONTENT_HASH = "225ed5747c1f00dd588ddd67d31492bc158b71cd9a3bc9d7a8d90aa17
 
 def ingest_fixtures(root: Path) -> VersionedStore:
     store = VersionedStore(root)
-    boc = load_boc_holidays(FIXTURES / "boc_holidays.yaml")
     for folder, name in (("primary", "csv"), ("crosscheck", "xcheck")):
         src = CsvSource(FIXTURES / folder, name=name)
         ingest_bars(src, store, SYMBOLS, START, END, OBSERVED, EOD)
         ingest_actions(src, store, SYMBOLS, START, END, OBSERVED, EOD)
-    ingest_series_source(CsvSource(FIXTURES / "primary"), store, NAMES, boc, START, END, OBSERVED)
+    ingest_series_source(
+        CsvSource(FIXTURES / "primary"), store, NAMES, None, START, END, OBSERVED, EOD
+    )
     return store
 
 
@@ -129,7 +136,7 @@ def gate_inputs(store: VersionedStore, day: date, **overrides: object) -> Qualit
         },
         "master_session": last_completed_session(CFG.calendars.master, as_of),
         "as_of_date": day,
-        "boc_days": load_boc_holidays(FIXTURES / "boc_holidays.yaml"),
+        "boc_days": boc_calendar(store, NAMES, None),
         "fx_series": "FXUSDCAD",
     }
     fields.update(overrides)

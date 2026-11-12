@@ -4,6 +4,18 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.3 — publication-record calendar and FX history (2026-11-11, approved by the user)
+- Bank of Canada business days now come from the Bank's publication record (Valet observation
+  dates of `FXUSDCAD`, `IEXE0101` and `AVG.INTWO`); `config/calendars/boc_holidays.yaml` only
+  decides dates after the record (2026-2027: federal holidays plus Ontario Family Day and Civic
+  Holiday closed; Quebec-only days and Easter Monday open). `himari data boc-calendar` lists
+  disagreements for manual review. Replaces the v1.1 holiday-list definition.
+- FX history: legacy U.S. dollar noon rate `IEXE0101` through 2016-12-30, `FXUSDCAD` from
+  2017-01-03 (`himari.data.fx`); rows keep their series name; legacy rows are released at
+  18:30 ET; the 2017 overlap is logged to `state/logs/fx_splice_overlap.csv`.
+- A bridged FX return is released at the later of the rate's publication and the bar's release.
+- CI: strict mypy now also covers `data`, `accounting`, `quality` and `gates`.
+
 ### M1 — Data layer (2026-11-11)
 - Sources (`himari.data.sources`): `DataSource` and `SeriesSource` interfaces; `CsvSource`;
   `BocValetSource` for `FXUSDCAD` and `AVG.INTWO` (fetch and parse split, so raw responses are

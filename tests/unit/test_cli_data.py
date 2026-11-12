@@ -9,7 +9,7 @@ from himari.cli import app
 
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "market"
-HOLIDAYS = str(FIXTURES / "boc_holidays.yaml")
+HOLIDAYS = str(ROOT / "config" / "calendars" / "boc_holidays.yaml")
 runner = CliRunner()
 
 

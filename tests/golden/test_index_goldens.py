@@ -13,7 +13,7 @@ import pytest
 
 from himari.accounting.indices import cash_index, total_return_index
 from himari.core.types import Bar, CorporateAction, Currency, QualityFlag, SeriesObservation
-from himari.data.calendars import BocBusinessDays
+from himari.data.calendars import BocBusinessDays, HolidayFile
 from himari.data.sources import CsvSource
 
 UTC = timezone.utc
@@ -205,7 +205,7 @@ class TestCashIndex:
         assert idx.level[1] == pytest.approx(1 + 0.0365 * 3 / 365, abs=1e-15)
 
     def test_stale_rate_is_flagged_but_used(self) -> None:
-        cal = BocBusinessDays([], [2025])
+        cal = BocBusinessDays(forward=HolidayFile(frozenset(), frozenset({2025})))
         s = [date(2025, 1, 6), date(2025, 1, 14), date(2025, 1, 15)]
         idx = cash_index(s, [corra(date(2025, 1, 3), 3.65)], boc_days=cal)
         assert idx.flags[s[2]] == [QualityFlag.RATE_STALE]

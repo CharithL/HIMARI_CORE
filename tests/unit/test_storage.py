@@ -1,12 +1,17 @@
 """Versioned, append-only storage: corrections, idempotence and as-of views (§5.3)."""
 
-from datetime import date, datetime, timezone
+import json
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 import pytest
 
 from himari.core.types import Bar, CorporateAction, SeriesObservation
+from himari.data.fx import splice_fx, splice_overlap, write_overlap_log
+from himari.data.ingest import SeriesNames, ingest_boc
+from himari.data.sources import BocValetSource
 from himari.data.storage import (
     ACTIONS,
     BARS,
@@ -19,6 +24,7 @@ from himari.data.storage import (
 )
 
 UTC = timezone.utc
+VALET = Path(__file__).parents[1] / "fixtures" / "boc_valet"
 RELEASE = datetime(2025, 1, 2, 23, 30, tzinfo=UTC)
 FIRST_PULL = datetime(2025, 1, 3, tzinfo=UTC)
 CORRECTION_PULL = datetime(2025, 3, 1, tzinfo=UTC)
@@ -107,37 +113,100 @@ class TestRawStore:
 
 
 class TestIngestBoc:
-    def test_raw_kept_unchanged_and_release_times_stamped(self, tmp_path: Path) -> None:
-        import httpx
+    """Valet ingestion with mocked HTTP: raw kept unchanged, release times, FX splice (v1.3)."""
 
-        from himari.data.calendars import BocBusinessDays
-        from himari.data.ingest import SeriesNames, ingest_boc
-        from himari.data.sources import BocValetSource
+    names = SeriesNames("FXUSDCAD", "AVG.INTWO")
+    eod = time(18, 30)
 
-        valet = Path(__file__).parents[1] / "fixtures" / "boc_valet"
-
+    @staticmethod
+    def source(payloads: dict[str, bytes]) -> BocValetSource:
         def handler(request: httpx.Request) -> httpx.Response:
-            series = request.url.path.split("/")[-2]
-            return httpx.Response(200, content=(valet / f"{series}.json").read_bytes())
+            return httpx.Response(200, content=payloads[request.url.path.split("/")[-2]])
 
-        src = BocValetSource(
-            "https://valet.test", client=httpx.Client(transport=httpx.MockTransport(handler))
-        )
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        return BocValetSource("https://valet.test", client=client)
+
+    @staticmethod
+    def payload(series: str, values: dict[str, str]) -> bytes:
+        obs = [{"d": d, series: {"v": v}} for d, v in values.items()]
+        return json.dumps({"observations": obs}).encode()
+
+    def test_2025_pull(self, tmp_path: Path) -> None:
+        payloads = {s: (VALET / f"{s}.json").read_bytes() for s in ("FXUSDCAD", "AVG.INTWO")}
         raw, store = RawStore(tmp_path / "raw"), VersionedStore(tmp_path / "clean")
-        boc = BocBusinessDays([date(2025, 7, 1)], [2025])
         observed = datetime(2025, 7, 10, tzinfo=UTC)
-        names = SeriesNames("FXUSDCAD", "AVG.INTWO")
-        ingest_boc(src, raw, store, names, boc, date(2025, 6, 1), date(2025, 7, 31), observed)
+        span = (date(2025, 6, 1), date(2025, 7, 31))
+        ingest_boc(self.source(payloads), raw, store, self.names, None, *span, observed, self.eod)
 
         saved = sorted((tmp_path / "raw" / "boc_valet").iterdir())
-        assert [p.read_bytes() for p in saved] == [
-            (valet / "AVG.INTWO.json").read_bytes(),
-            (valet / "FXUSDCAD.json").read_bytes(),
-        ]
+        assert [p.read_bytes() for p in saved] == [payloads["AVG.INTWO"], payloads["FXUSDCAD"]]
         fx = {o.obs_date: o.released_at_utc for o in store.series("FXUSDCAD")}
         assert fx[date(2025, 7, 2)] == datetime(2025, 7, 2, 20, 30, tzinfo=UTC)  # 16:30 ET
         corra = {o.obs_date: o.released_at_utc for o in store.series("AVG.INTWO")}
-        assert corra[date(2025, 6, 30)] == datetime(2025, 7, 2, 15, 0, tzinfo=UTC)  # 11:00 ET
+        # Jul 1 is absent from the record, so CORRA for Jun 30 is known Jul 2 at 11:00 ET
+        assert corra[date(2025, 6, 30)] == datetime(2025, 7, 2, 15, 0, tzinfo=UTC)
+
+    def test_legacy_splice_across_2017(self, tmp_path: Path) -> None:
+        """SYNTHETIC values. Legacy noon rate through 2016-12-30, FXUSDCAD from 2017-01-03."""
+        payloads = {
+            "IEXE0101": self.payload(
+                "IEXE0101",
+                {
+                    "2016-12-28": "1.3500",
+                    "2016-12-29": "1.3510",
+                    "2016-12-30": "1.3427",
+                    "2017-01-03": "1.3480",
+                    "2017-01-04": "1.3437",
+                },
+            ),
+            "FXUSDCAD": self.payload("FXUSDCAD", {"2017-01-03": "1.3483", "2017-01-04": "1.3440"}),
+            "AVG.INTWO": self.payload(
+                "AVG.INTWO",
+                {
+                    "2016-12-28": "0.48",
+                    "2016-12-29": "0.48",
+                    "2016-12-30": "0.48",
+                    "2017-01-03": "0.47",
+                },
+            ),
+        }
+        raw, store = RawStore(tmp_path / "raw"), VersionedStore(tmp_path / "clean")
+        observed = datetime(2026, 1, 5, tzinfo=UTC)
+        span = (date(2016, 12, 28), date(2017, 1, 4))
+        ingest_boc(self.source(payloads), raw, store, self.names, None, *span, observed, self.eod)
+
+        assert len(list((tmp_path / "raw" / "boc_valet").iterdir())) == 3
+        legacy = {o.obs_date: o.released_at_utc for o in store.series("IEXE0101")}
+        assert legacy[date(2016, 12, 30)] == datetime(2016, 12, 30, 23, 30, tzinfo=UTC)  # 18:30
+        corra = {o.obs_date: o.released_at_utc for o in store.series("AVG.INTWO")}
+        # Jan 2, 2017 has no publication, so CORRA for Dec 30 is known Jan 3 at 11:00 ET
+        assert corra[date(2016, 12, 30)] == datetime(2017, 1, 3, 16, 0, tzinfo=UTC)
+
+        spliced = splice_fx(store.series("IEXE0101"), store.series("FXUSDCAD"))
+        assert [(o.obs_date.isoformat(), o.series) for o in spliced] == [
+            ("2016-12-28", "IEXE0101"),
+            ("2016-12-29", "IEXE0101"),
+            ("2016-12-30", "IEXE0101"),
+            ("2017-01-03", "FXUSDCAD"),
+            ("2017-01-04", "FXUSDCAD"),
+        ]
+        overlap = splice_overlap(store.series("IEXE0101"), store.series("FXUSDCAD"))
+        assert [r.obs_date for r in overlap] == [date(2017, 1, 3), date(2017, 1, 4)]
+        assert overlap[0].diff == pytest.approx(0.0003, abs=1e-12)
+
+        log = tmp_path / "logs" / "fx_splice_overlap.csv"
+        write_overlap_log(overlap, log)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        assert lines[0] == "date,IEXE0101,FXUSDCAD,diff,rel_diff"
+        assert lines[1].startswith("2017-01-03,1.348,1.3483,0.000300,")
+
+    def test_legacy_not_fetched_after_it_stopped(self, tmp_path: Path) -> None:
+        payloads = {s: (VALET / f"{s}.json").read_bytes() for s in ("FXUSDCAD", "AVG.INTWO")}
+        raw, store = RawStore(tmp_path / "raw"), VersionedStore(tmp_path / "clean")
+        observed = datetime(2025, 7, 10, tzinfo=UTC)
+        span = (date(2025, 6, 1), date(2025, 7, 31))
+        ingest_boc(self.source(payloads), raw, store, self.names, None, *span, observed, self.eod)
+        assert store.series("IEXE0101") == []  # a KeyError in the mock would have failed the pull
 
 
 class TestConfirmations:

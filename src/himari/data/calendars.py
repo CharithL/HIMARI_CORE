@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from functools import cache
 from pathlib import Path
@@ -56,29 +57,50 @@ def release_utc(day: date, at_et: time) -> datetime:
     return datetime.combine(day, at_et, tzinfo=ET).astimezone(timezone.utc)
 
 
-class BocBusinessDays:
-    """Bank of Canada business days: weekdays not on the Bank's published holiday list.
+@dataclass(frozen=True)
+class HolidayFile:
+    """Forward Bank of Canada holidays for years not yet observed (v1.3)."""
 
-    Only covered years are known. Outside them, every weekday counts when measuring staleness
-    (so it is never under-counted) and next_business_day returns None (so a value is treated
-    as released when it was observed, never earlier).
+    holidays: frozenset[date] = frozenset()
+    years: frozenset[int] = frozenset()
+
+
+class BocBusinessDays:
+    """Bank of Canada business days (v1.3).
+
+    Within the publication record (first to last date the Bank published FX or CORRA for),
+    a day is a business day exactly when the Bank published. After the record, the forward
+    holiday file decides for the years it covers. Beyond both, the day is unknown: it counts
+    as a business day when measuring staleness (never under-counted), and next_business_day
+    returns None (a value is then treated as released when observed, never earlier).
     """
 
-    def __init__(self, holidays: Iterable[date], covered_years: Iterable[int]) -> None:
-        self._holidays = frozenset(holidays)
-        self._years = frozenset(covered_years)
+    def __init__(self, published: Iterable[date] = (), forward: HolidayFile | None = None) -> None:
+        self._published = frozenset(published)
+        self._first = min(self._published) if self._published else None
+        self._last = max(self._published) if self._published else None
+        self._forward = forward or HolidayFile()
 
-    def covers(self, day: date) -> bool:
-        return day.year in self._years
+    @property
+    def last_published(self) -> date | None:
+        return self._last
+
+    def known(self, day: date) -> bool | None:
+        """Whether day is a business day, or None when neither the record nor the file covers it."""
+        if self._first is not None and self._last is not None and self._first <= day <= self._last:
+            return day in self._published
+        if day.year in self._forward.years and (self._last is None or day > self._last):
+            return day.weekday() < 5 and day not in self._forward.holidays
+        return None
 
     def is_business_day(self, day: date) -> bool:
-        return day.weekday() < 5 and not (self.covers(day) and day in self._holidays)
+        known = self.known(day)
+        return day.weekday() < 5 if known is None else known
 
     def next_business_day(self, day: date) -> date | None:
-        """First business day after day, or None if that falls outside the covered years."""
         d = day + timedelta(days=1)
-        while self.covers(d):
-            if self.is_business_day(d):
+        while (known := self.known(d)) is not None:
+            if known:
                 return d
             d += timedelta(days=1)
         return None
@@ -93,16 +115,57 @@ class BocBusinessDays:
         return count
 
 
-def load_boc_holidays(path: Path) -> BocBusinessDays:
-    """Holiday file: covered_years plus holidays, each with date, name, scope and source url."""
+def load_boc_holidays(path: Path) -> HolidayFile:
+    """Forward holiday file: covered_years plus holidays (date, name, basis, source url)."""
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
-    covered = [int(y) for y in raw.get("covered_years") or []]
-    days = [date.fromisoformat(str(h["date"])) for h in raw.get("holidays") or []]
-    for year in covered:
+    years = frozenset(int(y) for y in raw.get("covered_years") or [])
+    days = frozenset(date.fromisoformat(str(h["date"])) for h in raw.get("holidays") or [])
+    for year in years:
         if not any(d.year == year for d in days):
             raise ValueError(f"{path}: year {year} is marked covered but lists no holidays")
-    return BocBusinessDays(days, covered)
+    return HolidayFile(days, years)
+
+
+@dataclass(frozen=True)
+class RecordReview:
+    """Disagreements to review by hand (v1.3)."""
+
+    fx_only: list[date]  # the Bank published FX but no CORRA for that day
+    corra_only: list[date]  # the Bank published CORRA but no FX for that day
+    file_closed_but_published: list[date]  # forward file said closed; the record says open
+    file_open_but_unpublished: list[date]  # forward file said open; nothing was published
+
+
+def review_record(
+    fx_dates: Iterable[date],
+    corra_dates: Iterable[date],
+    forward: HolidayFile,
+    start: date,
+    end: date,
+) -> RecordReview:
+    """Cross-check the FX and CORRA records against each other and against the forward file.
+
+    Weekends never count. A trailing day with FX but no CORRA yet is expected (CORRA for a day
+    is published the next business day) and is left out.
+    """
+    fx = {d for d in fx_dates if start <= d <= end}
+    corra = {d for d in corra_dates if start <= d <= end}
+    record = fx | corra
+    fx_only = sorted(fx - corra)
+    if fx_only and corra and fx_only[-1] > max(corra):
+        fx_only = [d for d in fx_only if d <= max(corra)]
+    closed, open_ = [], []
+    d = start
+    while d <= min(end, max(record, default=start)):
+        if d.year in forward.years and d.weekday() < 5:
+            file_open = d not in forward.holidays
+            if not file_open and d in record:
+                closed.append(d)
+            elif file_open and d not in record:
+                open_.append(d)
+        d += timedelta(days=1)
+    return RecordReview(fx_only, sorted(corra - fx), closed, open_)
 
 
 def corra_release_utc(

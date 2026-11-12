@@ -69,7 +69,10 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-packages = ["himari.core", "himari.risk", "himari.strategy", "himari.execution"]
+packages = [
+    "himari.core", "himari.risk", "himari.strategy", "himari.execution",
+    "himari.data", "himari.accounting", "himari.quality", "himari.gates",
+]
 
 [[tool.mypy.overrides]]
 module = ["exchange_calendars.*", "ib_async.*", "ibapi.*", "arch.*", "typer.*"]

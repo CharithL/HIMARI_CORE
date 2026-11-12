@@ -53,13 +53,15 @@ def data_update(
     to_date: str = typer.Option(None, "--to", help="End date YYYY-MM-DD (default today)"),
     csv_dir: Path = typer.Option(None, "--dir", help="CSV root (bars/, actions/, series/)"),
     name: str = typer.Option("csv", help="Source name stored with CSV rows"),
-    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Bank of Canada holiday file"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Forward Bank of Canada holiday file"),
     data_dir: Path = typer.Option(Path("data"), help="Data root (raw/ and clean/)"),
+    state_dir: Path = typer.Option(Path("state"), help="State root (logs/)"),
     config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
     """Pull data from a source into versioned storage."""
     from himari.core.config import load_config
     from himari.data.calendars import load_boc_holidays
+    from himari.data.fx import splice_overlap, write_overlap_log
     from himari.data.ingest import (
         SeriesNames,
         ingest_actions,
@@ -84,7 +86,7 @@ def data_update(
     end = _parse_date(to_date, _utc_now().date())
     store = VersionedStore(data_dir / "clean")
     names = SeriesNames(cfg.sources.fx_series, cfg.sources.cash_rate_series)
-    boc_days = load_boc_holidays(holidays)
+    forward = load_boc_holidays(holidays)
     observed = _utc_now()
     eod = time.fromisoformat(cfg.schedule.daily_job_after_et)
     results: dict[str, dict[str, AppendResult]] = {}
@@ -95,14 +97,29 @@ def data_update(
         symbols = [i.symbol for i in cfg.stage1.instruments()]
         results["bars"] = ingest_bars(src, store, symbols, start, end, observed, eod)
         results["actions"] = ingest_actions(src, store, symbols, start, end, observed, eod)
-        results["series"] = ingest_series_source(src, store, names, boc_days, start, end, observed)
+        results["series"] = {
+            "all": ingest_series_source(src, store, names, forward, start, end, observed, eod)
+        }
     else:
         boc = BocValetSource(cfg.sources.boc_valet_base)
         raw = RawStore(data_dir / "raw")
-        results["series"] = ingest_boc(boc, raw, store, names, boc_days, start, end, observed)
+        results["series"] = {
+            "all": ingest_boc(boc, raw, store, names, forward, start, end, observed, eod)
+        }
     for table, by_key in results.items():
         for key, r in by_key.items():
             typer.echo(f"{table:8} {key:10} +{r.added} new, {r.corrected} corrected")
+    overlap = splice_overlap(store.series(names.fx_legacy), store.series(names.fx))
+    if overlap:
+        log = state_dir / "logs" / "fx_splice_overlap.csv"
+        write_overlap_log(overlap, log)
+        worst = max(overlap, key=lambda r: abs(r.rel_diff))
+        mean = sum(r.rel_diff for r in overlap) / len(overlap)
+        typer.echo(
+            f"FX splice overlap: {len(overlap)} days {overlap[0].obs_date} to "
+            f"{overlap[-1].obs_date}; mean {mean:+.4%}, largest {worst.rel_diff:+.4%} "
+            f"on {worst.obs_date}; log {log}"
+        )
 
 
 @data_app.command("check")
@@ -110,7 +127,7 @@ def data_check(
     as_of: str = typer.Option(None, help="Decision date YYYY-MM-DD (default today)"),
     primary: str = typer.Option("csv", help="Primary source name"),
     crosscheck: str = typer.Option(None, help="Cross-check source name"),
-    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Bank of Canada holiday file"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Forward Bank of Canada holiday file"),
     data_dir: Path = typer.Option(Path("data"), help="Data root"),
     state_dir: Path = typer.Option(Path("state"), help="State root"),
     config: Path = typer.Option(_default_config_path(), help="Config file"),
@@ -118,6 +135,8 @@ def data_check(
     """Run the data-quality gate as of a decision time and print faults."""
     from himari.core.config import load_config
     from himari.data.calendars import last_completed_session, load_boc_holidays, release_utc
+    from himari.data.fx import splice_fx
+    from himari.data.ingest import SeriesNames, boc_calendar
     from himari.data.storage import VersionedStore
     from himari.quality.checks import Severity
     from himari.quality.confirmations import ConfirmationStore
@@ -129,12 +148,14 @@ def data_check(
     store = VersionedStore(data_dir / "clean")
     instruments = cfg.stage1.instruments()
     codes = cfg.calendars.by_exchange
+    names = SeriesNames(cfg.sources.fx_series, cfg.sources.cash_rate_series)
+    fx = splice_fx(store.series(names.fx_legacy, as_of_utc), store.series(names.fx, as_of_utc))
     inputs = QualityInputs(
         instruments=instruments,
         bars=store.bars(primary, as_of_utc),
         actions=store.actions(primary, as_of_utc),
         crosscheck=store.bars(crosscheck, as_of_utc) if crosscheck else {},
-        fx=store.series(cfg.sources.fx_series, as_of_utc),
+        fx=fx,
         corra=store.series(cfg.sources.cash_rate_series, as_of_utc),
         last_sessions={
             i.symbol: last_completed_session(codes[i.exchange.value], as_of_utc)
@@ -142,7 +163,7 @@ def data_check(
         },
         master_session=last_completed_session(cfg.calendars.master, as_of_utc),
         as_of_date=day,
-        boc_days=load_boc_holidays(holidays),
+        boc_days=boc_calendar(store, names, load_boc_holidays(holidays)),
         fx_series=cfg.sources.fx_series,
         confirmed=ConfirmationStore(state_dir / "confirmations.jsonl").confirmed(),
     )
@@ -157,6 +178,42 @@ def data_check(
     for r in report.portfolio:
         if r.severity != Severity.PASS:
             typer.echo(f"  portfolio {r.check} {r.severity.value} {r.detail}")
+
+
+@data_app.command("boc-calendar")
+def data_boc_calendar(
+    from_date: str = typer.Option(None, "--from", help="Start date YYYY-MM-DD"),
+    to_date: str = typer.Option(None, "--to", help="End date YYYY-MM-DD"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Forward Bank of Canada holiday file"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+) -> None:
+    """List publication-record disagreements for manual review (v1.3)."""
+    from himari.core.config import load_config
+    from himari.data.calendars import load_boc_holidays, review_record
+    from himari.data.ingest import SeriesNames
+    from himari.data.storage import VersionedStore
+
+    cfg = load_config(config)
+    names = SeriesNames(cfg.sources.fx_series, cfg.sources.cash_rate_series)
+    store = VersionedStore(data_dir / "clean")
+    fx = [o.obs_date for s in (names.fx_legacy, names.fx) for o in store.series(s)]
+    corra = [o.obs_date for o in store.series(names.cash_rate)]
+    if not fx and not corra:
+        typer.echo("No Bank of Canada series stored yet; run: himari data update --source boc")
+        raise typer.Exit(1)
+    start = _parse_date(from_date, min(fx + corra))
+    end = _parse_date(to_date, max(fx + corra))
+    review = review_record(fx, corra, load_boc_holidays(holidays), start, end)
+    typer.echo(f"Bank of Canada publication record {start} to {end}")
+    for label, days in (
+        ("FX published, no CORRA", review.fx_only),
+        ("CORRA published, no FX", review.corra_only),
+        ("holiday file says closed, Bank published", review.file_closed_but_published),
+        ("holiday file says open, nothing published", review.file_open_but_unpublished),
+    ):
+        listed = ", ".join(d.isoformat() for d in days) if days else "none"
+        typer.echo(f"  {label} ({len(days)}): {listed}")
 
 
 @data_app.command("confirm")

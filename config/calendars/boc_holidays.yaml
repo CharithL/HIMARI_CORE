@@ -1,21 +1,42 @@
-# Bank of Canada holidays, entered by hand from the Bank's published schedule (§5.4, v1.1).
-# Each entry keeps its source URL and retrieval date. A year goes in covered_years only once
-# every holiday for that year has been entered; uncovered years are handled conservatively
-# (CORRA treated as released when observed; staleness counts every weekday).
+# Forward Bank of Canada holidays (amendment v1.3).
 #
-# Open questions for the user (2026-11-11): the schedule page lists only upcoming holidays,
-# and it mixes national and provincial holidays. Which provincial holidays stop FXUSDCAD and
-# CORRA publication, and the source for 2014-2025, are still to be decided.
+# Past business days come from the Bank's publication record (the Valet observation dates
+# of FXUSDCAD, IEXE0101 and AVG.INTWO). This file only decides dates after the latest
+# published date; once a date has passed, the record wins. Review disagreements with
+# `himari data boc-calendar`.
+#
+# Rule (user decision, 2026-11-11; it matches the 2025 record): federal holidays plus
+# Ontario's Family Day and Civic Holiday are closed; Quebec-only days and Easter Monday
+# are open. A holiday on a weekend moves to the next free weekday (as the Bank's own
+# schedule shows for Boxing Day 2026).
 
-covered_years: []
+covered_years: [2026, 2027]
 
 holidays:
-  - {date: 2026-11-11, name: Remembrance Day, scope: national,
-     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
-     retrieved: 2026-11-11}
-  - {date: 2026-12-25, name: Christmas Day, scope: national,
-     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
-     retrieved: 2026-11-11}
-  - {date: 2026-12-28, name: Boxing Day, scope: national,
-     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
-     retrieved: 2026-11-11}
+  - {date: 2026-01-01, name: New Year's Day, basis: federal}
+  - {date: 2026-02-16, name: Family Day, basis: Ontario}
+  - {date: 2026-04-03, name: Good Friday, basis: federal}
+  - {date: 2026-05-18, name: Victoria Day, basis: federal}
+  - {date: 2026-07-01, name: Canada Day, basis: federal}
+  - {date: 2026-08-03, name: Civic Holiday, basis: Ontario}
+  - {date: 2026-09-07, name: Labour Day, basis: federal}
+  - {date: 2026-09-30, name: National Day for Truth and Reconciliation, basis: federal}
+  - {date: 2026-10-12, name: Thanksgiving, basis: federal}
+  - {date: 2026-11-11, name: Remembrance Day, basis: federal,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/"}
+  - {date: 2026-12-25, name: Christmas Day, basis: federal,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/"}
+  - {date: 2026-12-28, name: Boxing Day (observed), basis: federal,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/"}
+  - {date: 2027-01-01, name: New Year's Day, basis: federal}
+  - {date: 2027-02-15, name: Family Day, basis: Ontario}
+  - {date: 2027-03-26, name: Good Friday, basis: federal}
+  - {date: 2027-05-24, name: Victoria Day, basis: federal}
+  - {date: 2027-07-01, name: Canada Day, basis: federal}
+  - {date: 2027-08-02, name: Civic Holiday, basis: Ontario}
+  - {date: 2027-09-06, name: Labour Day, basis: federal}
+  - {date: 2027-09-30, name: National Day for Truth and Reconciliation, basis: federal}
+  - {date: 2027-10-11, name: Thanksgiving, basis: federal}
+  - {date: 2027-11-11, name: Remembrance Day, basis: federal}
+  - {date: 2027-12-27, name: Christmas Day (observed), basis: federal}
+  - {date: 2027-12-28, name: Boxing Day (observed), basis: federal}

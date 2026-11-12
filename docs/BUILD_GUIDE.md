@@ -1,7 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
-Amendments v1.1 and v1.2, 11 November 2026: data-layer clarifications in §5.3, §5.4, §5.5 and §6, marked *(v1.1)* or *(v1.2)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
+Amendments v1.1 to v1.3, 11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6, marked *(v1.1)*, *(v1.2)* or *(v1.3)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -144,7 +144,7 @@ Every source sits behind a `DataSource` interface. The research data set must us
 | `VendorSource` | Primary end-of-day history: prices, distributions, splits | The user chooses the vendor (it must cover TSX listings and corporate actions). API key goes in `.env` |
 | `IbkrSource` | Recent history and live quotes through TWS or IB Gateway | Needs market-data subscriptions |
 | `YFinanceSource` | Optional cross-check for research only | Unofficial. Never the only source |
-| `BocValetSource` | FX `FXUSDCAD` (CAD per USD, daily) and cash rate `AVG.INTWO` (CORRA, % per year) | `https://www.bankofcanada.ca/valet/observations/{series}/json`. Official and free |
+| `BocValetSource` | FX `FXUSDCAD` (CAD per USD, daily) and cash rate `AVG.INTWO` (CORRA, % per year). *(v1.3)* For history through 2016-12-30, the legacy U.S. dollar noon rate `IEXE0101` (group `LEGACY_NOON_RATES`, also CAD per USD, last updated 2017-04-28) | `https://www.bankofcanada.ca/valet/observations/{series}/json`. Official and free |
 | Event calendar | Official release times (§8.4) | Maintained by hand as YAML, with source URLs |
 
 Respect each provider's terms. Never scrape sites that forbid it. If the network or an API key is missing, stop and ask the user.
@@ -171,9 +171,10 @@ Respect each provider's terms. Never scrape sites that forbid it. If the network
   | End-of-day bars for session t | `schedule.daily_job_after_et` (18:30 ET) on t |
   | Corporate action with ex-date t | 18:30 ET on t |
   | `FXUSDCAD` for day t | 16:30 ET on t |
+  | *(v1.3)* Legacy noon rate `IEXE0101` for day t (history only) | 18:30 ET on t |
   | CORRA (`AVG.INTWO`) for day t | 11:00 ET on the next Bank of Canada business day (published about 09:00 ET and may be republished until 11:00 ET) |
 
-- *(v1.1)* **Bank of Canada business days** are the weekdays not on the Bank's published holiday list, kept in `config/calendars/boc_holidays.yaml` with each entry's source URL (not the XTSE calendar: the TSX trades on Remembrance Day, the Bank does not publish). Q8 counts these days. A year is used only once its list is complete; in a year not covered, a CORRA value is treated as released when it was observed and every weekday counts toward staleness, so neither can err early.
+- *(v1.3, replaces the v1.1 definition)* **Bank of Canada business days** come from the Bank's publication record: between the first and last published dates, a day is a business day exactly when the Bank published `FXUSDCAD`, `IEXE0101` or CORRA for it (the Valet observation dates). After the last published date, the forward holiday file `config/calendars/boc_holidays.yaml` decides: federal holidays plus Ontario's Family Day and Civic Holiday are closed, Quebec-only days and Easter Monday are open, and a weekend holiday moves to the next weekday. Once a date has passed, the record wins. Beyond both, a day counts as a business day for staleness and a CORRA value is treated as released when observed, so neither can err early. Q8 counts these days. `himari data boc-calendar` lists, for manual review, dates with FX but no CORRA, CORRA but no FX, and any disagreement between the file and the record. This is not the XTSE calendar: the TSX trades on Remembrance Day; the Bank does not publish.
 
 ### 5.5 CAD total-return index (one per instrument)
 
@@ -188,7 +189,8 @@ wealth index     W_t     = W_{t-1} * (1 + r_cad_t),   W_0 = 1
 
 - CAD-listed foreign-equity funds already include currency effects. Never convert them twice.
 - If the Bank of Canada has no rate for a US session date, use the latest earlier rate (at most 3 calendar days old) and set a flag (*(v1.1)* `FX_FILLED`).
-- *(v1.2)* **FX bridging, for the index history only.** A US session whose latest rate is older than 3 days is inside a gap: it gets no CAD return of its own (`FX_BRIDGED`). The first session with a usable rate books the compounded return, `prod(1 + r_loc) * X_new / X_old - 1`, also flagged `FX_BRIDGED`; its `released_at` is no earlier than that rate's publication, so a replay cannot see it early. A bridged multi-day return enters the EWMA as one observation. If the two rates are more than `data_quality.fx_bridge_max_calendar_days` (7) calendar days apart, the gap is a data outage (`FX_OUTAGE`): the instrument is in `DATA_FAULT` and the index has no value after the gap until a person runs `himari data confirm FXUSDCAD <first rate date after the gap>`. Bridging never unlocks a trade: Q7 at decision time is unchanged.
+- *(v1.3)* **FX history.** `X_t` is the legacy noon rate `IEXE0101` through 2016-12-30 and `FXUSDCAD` from 2017-01-03. Every stored row keeps its series name, and the January to April 2017 overlap between the two series is written to `state/logs/fx_splice_overlap.csv` on each Bank of Canada pull.
+- *(v1.2)* **FX bridging, for the index history only.** A US session whose latest rate is older than 3 days is inside a gap: it gets no CAD return of its own (`FX_BRIDGED`). The first session with a usable rate books the compounded return, `prod(1 + r_loc) * X_new / X_old - 1`, also flagged `FX_BRIDGED`; its `released_at` is the later of that rate's publication and the bar's release *(v1.3)*, so a replay cannot see it early. A bridged multi-day return enters the EWMA as one observation. If the two rates are more than `data_quality.fx_bridge_max_calendar_days` (7) calendar days apart, the gap is a data outage (`FX_OUTAGE`): the instrument is in `DATA_FAULT` and the index has no value after the gap until a person runs `himari data confirm FXUSDCAD <first rate date after the gap>`. Bridging never unlocks a trade: Q7 at decision time is unchanged.
 - The signal index uses **gross** distributions. The account ledger applies withholding tax (§9.4).
 - Test the split-and-distribution-on-the-same-day edge case explicitly.
 
@@ -1100,3 +1102,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 |---|---|---|---|
 | v1.1 | 11 November 2026 | User | §5.3: `bars.parquet` adds `adj_close`; action type is `cash` or `split` only; corrections are released at `observed_at_utc`. §5.4: release times for bars, actions, `FXUSDCAD` (16:30 ET same day) and CORRA (11:00 ET next Bank of Canada business day); Bank of Canada business days from the Bank's published holiday list. §5.5: `FX_FILLED` flag. §6: Q5 runs on every session with the existing 0.10% tolerance; Q6 missing-cross-check rule; flags `FX_FILLED` and `ZERO_VOLUME`. No parameter changed. |
 | v1.2 | 11 November 2026 | User | §5.5: FX bridging for the index history (`FX_BRIDGED`), capped at 7 calendar days; longer gaps are outages (`FX_OUTAGE`, `DATA_FAULT` until confirmed). §6 Q7: outage check in the history; decision-time Q7 unchanged. New parameter `data_quality.fx_bridge_max_calendar_days: 7` in `frozen_v1.yaml` (Appendix B); the config hash changes. |
+| v1.3 | 11 November 2026 | User | §5.2: legacy noon rate `IEXE0101` for FX history. §5.4: release time for `IEXE0101` (18:30 ET); Bank of Canada business days from the Bank's publication record, with a forward holiday file (federal holidays plus Ontario Family Day and Civic Holiday) for dates not yet published; disagreements listed by `himari data boc-calendar`. §5.5: FX splice at 2016-12-30 / 2017-01-03 with the 2017 overlap logged; a bridged return is released at the later of the rate's publication and the bar's release. No parameter changed. |

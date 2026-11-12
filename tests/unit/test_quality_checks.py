@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from himari.core.types import Bar, CorporateAction, QualityFlag, SeriesObservation
-from himari.data.calendars import BocBusinessDays
+from himari.data.calendars import BocBusinessDays, HolidayFile
 from himari.quality.checks import (
     CheckResult,
     Severity,
@@ -234,7 +234,8 @@ def corra_obs(day: date) -> SeriesObservation:
     return SeriesObservation(series="AVG.INTWO", obs_date=day, value=3.0, source="t")
 
 
-BOC_2025 = BocBusinessDays([date(2025, 11, 11)], [2025])
+BOC_2025 = BocBusinessDays(forward=HolidayFile(frozenset({date(2025, 11, 11)}), frozenset({2025})))
+NO_HOLIDAYS_2025 = BocBusinessDays(forward=HolidayFile(frozenset(), frozenset({2025})))
 
 
 class TestQ8CashRate:
@@ -247,7 +248,7 @@ class TestQ8CashRate:
         # (Thu Nov 6, Fri Nov 14] holds 5 Bank business days with Tue Nov 11 off, 6 without
         obs = [corra_obs(date(2025, 11, 6))]
         assert only_pass(check_cash_rate(obs, date(2025, 11, 14), BOC_2025, 5))
-        (r,) = check_cash_rate(obs, date(2025, 11, 14), BocBusinessDays([], [2025]), 5)
+        (r,) = check_cash_rate(obs, date(2025, 11, 14), NO_HOLIDAYS_2025, 5)
         assert r.severity == Severity.WARN
 
     def test_stale_uses_last_value_with_flag(self) -> None:
