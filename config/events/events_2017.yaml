@@ -1,0 +1,20 @@
+# Official release times for the event gate (§8.4, v1.5), 2017.
+# Collected politely from the official sites by scripts/events/ (see source_url).
+# Only scheduled releases; unscheduled ones could not be known at the decision close.
+events:
+  - {type: BOC, release_utc: '2017-01-18T15:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/01/fad-press-release-2017-01-18/', retrieved_utc: '2026-11-12T16:08:07+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-02-01T19:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170201a.htm', retrieved_utc: '2026-11-12T15:56:10+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-03-01T15:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/03/fad-press-release-2017-03-01/', retrieved_utc: '2026-11-12T16:08:10+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-03-15T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170315a.htm', retrieved_utc: '2026-11-12T15:56:12+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-04-12T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/04/fad-press-release-2017-04-12/', retrieved_utc: '2026-11-12T16:08:12+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-05-03T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170503a.htm', retrieved_utc: '2026-11-12T15:56:14+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-05-24T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/05/fad-press-release-2017-05-24/', retrieved_utc: '2026-11-12T16:08:14+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-06-14T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170614a.htm', retrieved_utc: '2026-11-12T15:56:16+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-07-12T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/07/fad-press-release-2017-07-12/', retrieved_utc: '2026-11-12T16:08:17+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-07-26T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170726a.htm', retrieved_utc: '2026-11-12T15:56:19+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-09-06T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/09/fad-press-release-2017-09-06/', retrieved_utc: '2026-11-12T16:08:20+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-09-20T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20170920a.htm', retrieved_utc: '2026-11-12T15:56:21+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-10-25T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/10/fad-press-release-2017-10-25/', retrieved_utc: '2026-11-12T16:08:22+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-11-01T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20171101a.htm', retrieved_utc: '2026-11-12T15:56:23+00:00', version: 1, time_assumed: false}
+  - {type: BOC, release_utc: '2017-12-06T15:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2017/12/fad-press-release-2017-12-06/', retrieved_utc: '2026-11-12T16:08:25+00:00', version: 1, time_assumed: false}
+  - {type: FOMC, release_utc: '2017-12-13T19:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20171213a.htm', retrieved_utc: '2026-11-12T15:56:25+00:00', version: 1, time_assumed: false}
