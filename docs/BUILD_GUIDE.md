@@ -1,7 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
-Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6) and v1.4 (12 November 2026: §7.3 order and common scale), marked *(v1.1)* to *(v1.4)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
+Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6) v1.4 (12 November 2026: §7.3 order and common scale) and v1.5 (12 November 2026: resume, loss floor, event archive, kill switch, M4 demo), marked *(v1.1)* to *(v1.5)*. Log in Appendix G. v1.2 adds `data_quality.fx_bridge_max_calendar_days` and v1.5 adds `account.loss_floor_cad`; no existing parameter changed.
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -291,7 +291,7 @@ Each session after the close, compute `σ_p` for the **current holdings**. If it
   - ECB (ecb.europa.eu), BoJ (boj.or.jp) and SNB (snb.ch) policy decisions
   - US CPI and Employment Situation (bls.gov)
   - Canada CPI and Labour Force Survey (statcan.gc.ca)
-- **Storage:** `config/events/events_YYYY.yaml`, with `type`, `release_utc`, `source_url`, `retrieved_utc` and `version`. A historical archive covering 2015–2025 is required for backtests; the report must name any event types that are missing.
+- **Storage:** `config/events/events_YYYY.yaml`, with `type`, `release_utc`, `source_url`, `retrieved_utc` and `version`. A historical archive covering 2015–2025 is required for backtests; the report must name any event types that are missing. *(v1.5)* Entries are collected politely from the official sites, with times as published; when only the date is published, the institution's standard time is used and the entry is flagged `time_assumed`.
 - **Window:** from the decision close to the end of the execution session.
 - **Rule:** affected instruments (`events.map` in config) cannot be increased; `target_i = min(target_i, current_i)`. Cuts are allowed. There are no automatic exits before events and no restoring trades after them; the next weekly decision handles that.
 - Register test H6 checks a stronger version (a 50% cap). It is not part of the baseline.
@@ -310,14 +310,14 @@ Each session after the close, compute `σ_p` for the **current holdings**. If it
 - Track NAV in CAD after costs, valued at Bank of Canada FX, and its high-water mark `HWM`. Drawdown `DD = NAV / HWM - 1`.
 - **NORMAL:** `DD > -10%`.
 - **HALVED:** `-15% < DD <= -10%`. New targets are multiplied by 0.5. The state returns to NORMAL at a weekly decision when `DD > -10%`.
-- **SUSPENDED:** `DD <= -15%`. No additions at all; existing positions can still be cut by the other rules. Leaving this state requires `himari resume --reason "..."`, which writes a signed record (user, time, reason). It never clears automatically.
+- **SUSPENDED:** `DD <= -15%`. No additions at all; existing positions can still be cut by the other rules. Leaving this state requires `himari resume --reason "..."`, which writes a signed record (user, time, reason). It never clears automatically. *(v1.5)* `resume` resets the drawdown reference to the current NAV (the old HWM and drawdown stay in the record), so a suspended, all-cash account can never deadlock. It is refused when NAV is below `account.loss_floor_cad`; that key may be null in backtest and paper and must be set before live.
 
 ### 8.7 Faults and kill switch
 
 - `DATA_FAULT` applies per instrument (§6).
 - `VENUE_FAULT` covers a broker disconnect, a reconciliation mismatch, rejected orders or an unknown order state. It blocks additions across the whole portfolio until resolved.
-- `KILL` comes from `himari kill`, or from a `KILL` file in `state/`. It cancels open orders and allows no new orders. It does **not** liquidate positions.
-- All of these states are stored in SQLite with no expiry. The old Redis circuit breaker let halts expire after an hour; that bug must not be carried over.
+- `KILL` comes from `himari kill`, or from a `KILL` file in `state/`. It cancels open orders and allows no new orders. It does **not** liquidate positions. *(v1.5)* No orders at all, cuts included: the gate blocks additions and flags `orders_blocked` for the order stage; from M7 it also cancels open broker orders.
+- All of these states are stored in SQLite with no expiry. The old Redis circuit breaker let halts expire after an hour; that bug must not be carried over. *(v1.5)* A signed record is an append-only entry that stores the previous record's SHA-256, the OS user and the UTC time; the chain is verified at startup and a broken chain stops the run.
 
 ### 8.8 State summary
 
@@ -662,7 +662,7 @@ IB Gateway must be running and logged in to the paper account. If the user autom
 | M1 | Data layer: sources, calendars, versioned storage, total-return and cash indices, the Bank of Canada adapter, quality gate | Golden tests for the indices; every quality check tested; fixture data ingests deterministically |
 | M2 | Strategy and risk: signal, EWMA, correlation shrinkage, covariance, sizing | Golden tests (Appendix F); property tests for weights and caps |
 | M3 | Gates and state machine: ceiling, daily check, events, stress, drawdown, faults, kill | Cut-only property test; stress goldens; persistence tests |
-| M4 | Simulator: clocks, data, `SimBroker`, cost model, ledger, weekly loop, band, reconciliation | No-look-ahead and determinism tests; 1× and 2× runs on fixtures |
+| M4 | Simulator: clocks, data, `SimBroker`, cost model, ledger, weekly loop, band, reconciliation | No-look-ahead and determinism tests; 1× and 2× runs on fixtures. *(v1.5)* `himari backtest --demo` runs the fixture data, prints a weekly log (signals, gates that bound and why, orders, fills, costs, NAV) and writes a one-page HTML report (NAV vs cash, weights over time, trade list) |
 | M5 | Research engine: metrics, CER, ES, bootstrap, Holm, PSR/DSR/MinTRL, PBO, trial ledger, register loader, reports | Golden tests (Appendix F); reports render |
 | M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
 | M7 | **Paper trading and shadow run:** live clock and quotes (IBKR), `QuotePaperBroker`, `IBKRPaperBroker`, dashboard, alerts, scheduler, kill switch | One week of dry runs; then the 90-day shadow run starts, with the operational checklist tracked automatically |
@@ -872,6 +872,9 @@ stress:
   joint_scenario: {EQUITY: -0.07, GOLD: -0.08, COMMOD: -0.10, CA_YIELD_bp: 50, CAD_UP: 0.0}
   joint_limit: 0.05
   diagnostic_all_adverse_including_fx: true
+
+account:
+  loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
 
 drawdown:
   halve_at: -0.10
@@ -1105,3 +1108,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 | v1.2 | 11 November 2026 | User | §5.5: FX bridging for the index history (`FX_BRIDGED`), capped at 7 calendar days; longer gaps are outages (`FX_OUTAGE`, `DATA_FAULT` until confirmed). §6 Q7: outage check in the history; decision-time Q7 unchanged. New parameter `data_quality.fx_bridge_max_calendar_days: 7` in `frozen_v1.yaml` (Appendix B); the config hash changes. |
 | v1.3 | 11 November 2026 | User | §5.2: legacy noon rate `IEXE0101` for FX history. §5.4: release time for `IEXE0101` (18:30 ET); Bank of Canada business days from the Bank's publication record, with a forward holiday file (federal holidays plus Ontario Family Day and Civic Holiday) for dates not yet published; disagreements listed by `himari data boc-calendar`. §5.5: FX splice at 2016-12-30 / 2017-01-03 with the 2017 overlap logged; a bridged return is released at the later of the rate's publication and the bar's release. No parameter changed. |
 | v1.4 | 12 November 2026 | User | §7.3: `k = 0.08 / sqrt(bᵀ ρ_s b)` over the whole frozen universe, an instrument without 252 sessions included with zero correlation (weight 0, budget in cash); caps and the cash constraint act on the all-on weights `a = k u`, and signals are applied last (`w = a s`), so switching a signal off never raises another weight (rule 6). Appendix F sizing toy case: after caps `[0.25, 0.25, 0.15]`, sum 0.65; after signals `[0.25, 0.25, 0]`; final volatility 0.038324. No parameter changed. |
+| v1.5 | 12 November 2026 | User | §8.6: `resume` resets the drawdown reference to the current NAV (old HWM kept in the record) and is refused below the new `account.loss_floor_cad` (null allowed in backtest and paper, required before live). §8.4: event archive collected from the official sites, times as published, `time_assumed` when only the date is published, missing types named in reports. §8.7: KILL sends no orders, cuts included, and from M7 cancels open broker orders; signed record = hash chain + OS user + UTC time, verified at startup. §16: M4 adds `himari backtest --demo`. Config hash changes. |

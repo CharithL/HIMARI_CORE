@@ -96,6 +96,9 @@ stress:
   joint_limit: 0.05
   diagnostic_all_adverse_including_fx: true
 
+account:
+  loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
+
 drawdown:
   halve_at: -0.10
   suspend_at: -0.15

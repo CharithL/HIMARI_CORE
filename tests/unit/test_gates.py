@@ -71,6 +71,17 @@ class TestEventCalendar:
         )
         (got,) = load_events(tmp_path, CFG.events.map)
         assert got.type == "FOMC" and got.release_utc == datetime(2025, 1, 29, 19, tzinfo=UTC)
+        assert got.time_assumed is False
+
+    def test_time_assumed_flag(self, tmp_path: Path) -> None:
+        (tmp_path / "events_2016.yaml").write_text(
+            "events:\n"
+            "  - {type: BOJ, release_utc: '2016-01-29T03:00:00Z', source_url: u,"
+            " retrieved_utc: '2026-11-12T00:00:00Z', time_assumed: true}\n",
+            encoding="utf-8",
+        )
+        (got,) = load_events(tmp_path, CFG.events.map)
+        assert got.time_assumed is True
 
     def test_unknown_type_and_naive_times_are_rejected(self, tmp_path: Path) -> None:
         f = tmp_path / "events_2025.yaml"

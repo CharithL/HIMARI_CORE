@@ -283,10 +283,12 @@ def dashboard() -> None:
     typer.echo("[M7] dashboard (not yet implemented)")
 
 
-def _safety(state_dir: Path) -> SafetyStore:
+def _safety(state_dir: Path, check_chain: bool = True) -> SafetyStore:
     from himari.risk.state_machine import SafetyStore
 
-    return SafetyStore(state_dir / "himari.sqlite", kill_file=state_dir / "KILL")
+    return SafetyStore(
+        state_dir / "himari.sqlite", kill_file=state_dir / "KILL", check_chain=check_chain
+    )
 
 
 def _actor() -> str:
@@ -334,13 +336,15 @@ def resume(
 
     tracker = DrawdownTracker(_safety(state_dir), load_config(config).drawdown)
     try:
-        status = tracker.resume(reason, _actor(), _utc_now())
+        status = tracker.resume(
+            reason, _actor(), _utc_now(), load_config(config).account.loss_floor_cad
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     except ResumeRefusedError as exc:
         typer.echo(f"Resume refused: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(f"Drawdown state now {status.state.value} (drawdown {status.drawdown:.2%})")
+    typer.echo(f"Drawdown state now {status.state.value}; reference reset to NAV {status.nav:,.2f}")
 
 
 @app.command("status")
@@ -352,7 +356,7 @@ def status(
     from himari.core.config import load_config
     from himari.risk.state_machine import DrawdownTracker
 
-    store = _safety(state_dir)
+    store = _safety(state_dir, check_chain=False)  # report a broken chain instead of failing
     dd = DrawdownTracker(store, load_config(config).drawdown).status()
     typer.echo(f"KILL         {'ON' if store.kill_active() else 'off'}")
     typer.echo(f"VENUE_FAULT  {'ON' if store.venue_fault_active() else 'off'}")

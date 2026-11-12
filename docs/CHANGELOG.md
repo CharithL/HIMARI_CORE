@@ -4,6 +4,20 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.5 — resume, loss floor, events, kill switch, M4 demo (2026-11-12, approved by the user)
+- §8.6: `himari resume` resets the drawdown reference to the current NAV; the old HWM and
+  drawdown stay in the record. It no longer waits for a recovery (that could deadlock a
+  suspended, all-cash account). It is refused when NAV is below `account.loss_floor_cad`.
+- New config key `account.loss_floor_cad: null` (null allowed in backtest and paper; required
+  before live). Config hash changes from `801af849…` to `ca1b6e98…`.
+- §8.4: event entries carry `time_assumed` when only the date is published; collected politely
+  from the official sites with `source_url` and `retrieved_utc`.
+- §8.7: KILL sends no orders, cuts included (`orders_blocked`); from M7 it also cancels open
+  broker orders. The safety store verifies its record chain at startup and refuses to run when
+  it is broken (`himari status` still reports it).
+- §16: M4 is done only when `himari backtest --demo` prints a weekly log and writes a one-page
+  HTML report from the fixture data.
+
 ### M3 — Gates and state machine (2026-11-12)
 - `himari.gates.pipeline.run_gates`: data -> volatility ceiling -> event -> stress -> drawdown ->
   faults and kill switch, with rule 1 checked after every gate (a violation raises).

@@ -136,6 +136,10 @@ class StressConfig(BaseModel):
     diagnostic_all_adverse_including_fx: bool = True
 
 
+class AccountConfig(BaseModel):
+    loss_floor_cad: float | None = None  # null allowed in backtest and paper; required live
+
+
 class DrawdownConfig(BaseModel):
     halve_at: float = -0.10
     suspend_at: float = -0.15
@@ -224,6 +228,7 @@ class FrozenConfig(BaseModel):
     signal: SignalConfig
     risk: RiskConfig
     rebalance: RebalanceConfig
+    account: AccountConfig = Field(default_factory=AccountConfig)
     drawdown: DrawdownConfig
     data_quality: DataQualityConfig
     sources: SourcesConfig

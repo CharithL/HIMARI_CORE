@@ -27,6 +27,7 @@ class Event:
     source_url: str
     retrieved_utc: datetime
     version: int = 1
+    time_assumed: bool = False  # only the date was published; the standard time is used
 
 
 def _utc(value: object) -> datetime:
@@ -53,6 +54,7 @@ def load_events(directory: Path, known_types: Iterable[str]) -> list[Event]:
                 source_url=str(e["source_url"]),
                 retrieved_utc=_utc(e["retrieved_utc"]),
                 version=int(e.get("version", 1)),
+                time_assumed=bool(e.get("time_assumed", False)),
             )
             if event.type not in known:
                 raise ValueError(f"{path}: unknown event type {event.type!r}")

@@ -10,6 +10,7 @@ import pytest
 from himari.core.config import DrawdownConfig
 from himari.core.types import DrawdownState
 from himari.risk.state_machine import (
+    ChainBrokenError,
     DrawdownTracker,
     ResumeRefusedError,
     SafetyStore,
@@ -91,15 +92,35 @@ class TestDrawdownStates:
         last = store(tmp_path).latest("DRAWDOWN")
         assert last is not None and (last.actor, last.reason) == ("tester", "losses reviewed")
 
-    def test_resume_refused_while_still_below_the_suspension_level(self, tmp_path: Path) -> None:
+    def test_resume_resets_the_reference_to_current_nav(self, tmp_path: Path) -> None:
+        """v1.5: resuming at -16% works and measures later drawdowns from the resume NAV."""
         self.run(tmp_path, [(100, True), (84, False)])
-        with pytest.raises(ResumeRefusedError, match="at or below"):
-            DrawdownTracker(store(tmp_path), CFG).resume("try", "tester", T0)
+        tracker = DrawdownTracker(store(tmp_path), CFG)
+        status = tracker.resume("losses reviewed", "tester", T0)
+        assert (status.state, status.hwm, status.drawdown) == (DrawdownState.NORMAL, 84, 0.0)
+        record = store(tmp_path).latest("DRAWDOWN")
+        assert record is not None
+        assert record.detail["old_hwm"] == 100 and record.detail["new_reference"] == 84
+        assert record.detail["old_drawdown"] == pytest.approx(-0.16)
+        later = tracker.update(80, T0 + timedelta(days=1), weekly_decision=False)
+        assert later.state == DrawdownState.NORMAL
+        assert later.drawdown == pytest.approx(80 / 84 - 1)
 
-    def test_resume_into_halved(self, tmp_path: Path) -> None:
-        self.run(tmp_path, [(100, True), (84, False), (88, True)])
+    def test_resume_works_from_an_all_cash_suspended_account(self, tmp_path: Path) -> None:
+        """No deadlock: a suspended account that went to cash and never recovers can resume."""
+        self.run(tmp_path, [(100, True), (84, False), (84, True), (84, True)])
         status = DrawdownTracker(store(tmp_path), CFG).resume("reviewed", "tester", T0)
-        assert status.state == DrawdownState.HALVED  # DD -12% at resume
+        assert status.state == DrawdownState.NORMAL
+
+    def test_resume_refused_below_the_loss_floor(self, tmp_path: Path) -> None:
+        self.run(tmp_path, [(100, True), (84, False)])
+        tracker = DrawdownTracker(store(tmp_path), CFG)
+        with pytest.raises(ResumeRefusedError, match="loss floor"):
+            tracker.resume("try", "tester", T0, loss_floor_cad=90.0)
+        assert tracker.state() == DrawdownState.SUSPENDED
+        assert (
+            tracker.resume("try", "tester", T0, loss_floor_cad=80.0).state == DrawdownState.NORMAL
+        )
 
 
 class TestRecordIntegrity:
@@ -123,3 +144,6 @@ class TestRecordIntegrity:
             con.execute("DROP TRIGGER safety_events_no_update")
             con.execute("UPDATE safety_events SET reason = 'edited' WHERE seq = 1")
         assert not s.verify()
+        with pytest.raises(ChainBrokenError, match="broken"):  # verified at startup
+            store(tmp_path)
+        assert not SafetyStore(s.db_path, check_chain=False).verify()  # status can still report

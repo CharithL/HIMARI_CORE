@@ -82,12 +82,20 @@ def _require_reason(reason: str) -> str:
 
 
 class SafetyStore:
-    def __init__(self, db_path: Path, kill_file: Path | None = None) -> None:
+    def __init__(
+        self, db_path: Path, kill_file: Path | None = None, check_chain: bool = True
+    ) -> None:
+        """Opens the store; by default a broken record chain stops startup."""
         self.db_path = db_path
         self.kill_file = kill_file
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as con, con:
             con.executescript(_SCHEMA)
+        if check_chain and not self.verify():
+            raise ChainBrokenError(
+                f"the safety record chain in {db_path} is broken; safety states cannot be "
+                "trusted, so nothing runs until it is investigated"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -221,6 +229,10 @@ def _at_or_below(drawdown: float, threshold: float) -> bool:
     return drawdown <= threshold + THRESHOLD_TOLERANCE
 
 
+class ChainBrokenError(RuntimeError):
+    pass
+
+
 class ResumeRefusedError(RuntimeError):
     pass
 
@@ -275,20 +287,28 @@ class DrawdownTracker:
             self.store.record(DRAWDOWN, new.value, f"drawdown {dd:.2%}", "system", at_utc, detail)
         return DrawdownStatus(new, nav, hwm, dd)
 
-    def resume(self, reason: str, actor: str, at_utc: datetime) -> DrawdownStatus:
-        """Leave SUSPENDED (manual, with a reason). Refused while the drawdown is still at or
-        below the suspension level, because the next update would suspend again."""
+    def resume(
+        self, reason: str, actor: str, at_utc: datetime, loss_floor_cad: float | None = None
+    ) -> DrawdownStatus:
+        """Leave SUSPENDED (manual, with a reason) and reset the drawdown reference to the
+        current NAV (v1.5). The old high-water mark and drawdown stay in the record. Refused
+        when NAV is below the account loss floor, if one is configured."""
         reason = _require_reason(reason)
         if self.state() != DrawdownState.SUSPENDED:
             raise ResumeRefusedError("the drawdown state is not SUSPENDED")
         status = self.status()
-        if _at_or_below(status.drawdown, self.cfg.suspend_at):
+        if status.nav is None:
+            raise ResumeRefusedError("no NAV has been recorded")
+        if loss_floor_cad is not None and status.nav < loss_floor_cad:
             raise ResumeRefusedError(
-                f"drawdown is {status.drawdown:.2%}, at or below {self.cfg.suspend_at:.0%}; "
-                "resuming now would suspend again at the next update"
+                f"NAV {status.nav:,.2f} is below the loss floor {loss_floor_cad:,.2f} CAD"
             )
-        halved = _at_or_below(status.drawdown, self.cfg.halve_at)
-        new = DrawdownState.HALVED if halved else DrawdownState.NORMAL
-        detail = {"nav": status.nav, "hwm": status.hwm, "drawdown": status.drawdown}
-        self.store.record(DRAWDOWN, new.value, reason, actor, at_utc, detail)
-        return DrawdownStatus(new, status.nav, status.hwm, status.drawdown)
+        self.store.add_nav_mark(NavMark(at_utc.isoformat(), status.nav, status.nav, 0.0))
+        detail = {
+            "nav": status.nav,
+            "old_hwm": status.hwm,
+            "old_drawdown": status.drawdown,
+            "new_reference": status.nav,
+        }
+        self.store.record(DRAWDOWN, DrawdownState.NORMAL.value, reason, actor, at_utc, detail)
+        return DrawdownStatus(DrawdownState.NORMAL, status.nav, status.nav, 0.0)
