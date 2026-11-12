@@ -4,6 +4,21 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### M2 — Strategy and risk (2026-11-12)
+- `himari.strategy.trend`: excess-return trend signal over 252 observations; exactly zero is
+  off; fewer than 253 valid observations means not eligible. Observations are the fund's
+  sessions with a wealth value, so a bridged FX gap day is skipped (as for the EWMA).
+- `himari.risk.ewma`: zero-mean EWMA variance seeded with the mean of r^2 over the first 252
+  returns; annualized with 252; floors applied per asset class in the decision.
+- `himari.risk.covariance`: common TSX-date return matrix (US sessions compounded into the next
+  TSX interval), EWMA correlation (half-life 60), shrinkage 0.5 toward I, Sigma = D rho_s D.
+- `himari.sizing.weights`: §7.3 steps 1-6 with a trace of every step and the limits that bound.
+- `himari.strategy.stage1`: one decision from as-of indices; inputs are cut at the decision
+  date. A fund is eligible with a signal, a volatility and 252 returns on the TSX grid.
+- Tests: Appendix F goldens through the real functions (decay factors, trend signal, sizing toy
+  case); property tests for limits and the common scale; a fixture decision with a golden,
+  determinism and no-look-ahead checks. The old inline-numpy toy case was removed.
+
 ### Amendment v1.3 — publication-record calendar and FX history (2026-11-11, approved by the user)
 - Bank of Canada business days now come from the Bank's publication record (Valet observation
   dates of `FXUSDCAD`, `IEXE0101` and `AVG.INTWO`); `config/calendars/boc_holidays.yaml` only

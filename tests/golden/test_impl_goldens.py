@@ -8,8 +8,6 @@ import math
 from datetime import date
 from pathlib import Path
 
-import numpy as np
-
 from himari.core.config import (
     code_hash,
     config_hash,
@@ -54,7 +52,7 @@ class TestRiskModuleGoldens:
 
 
 class TestSizingGoldens:
-    """Sizing toy case from Appendix F §5 — uses config budgets and caps."""
+    """Budgets and caps from config. The Appendix F toy case is in test_strategy_risk_goldens."""
 
     def test_budget_splits_match_config(self) -> None:
         cfg = load_config(CONFIG_PATH)
@@ -72,35 +70,6 @@ class TestSizingGoldens:
         cfg = load_config(CONFIG_PATH)
         equity_group = next(g for g in cfg.stage1.caps.groups if g.name == "all_equity")
         assert equity_group.max == 0.40
-
-    def test_sizing_toy_case_vol_ceiling(self) -> None:
-        """3-instrument toy case: all-on portfolio vol must equal ceiling."""
-        cfg = load_config(CONFIG_PATH)
-        ceiling = cfg.risk.portfolio_vol_ceiling
-
-        budgets = [0.5, 0.3, 0.2]
-        sigmas = [0.15, 0.05, 0.07]
-        u = np.array([b / s for b, s in zip(budgets, sigmas)])
-
-        rho = np.array(
-            [
-                [1.0, -0.2, 0.1],
-                [-0.2, 1.0, 0.0],
-                [0.1, 0.0, 1.0],
-            ]
-        )
-        shrink = cfg.risk.corr_shrink_to_identity
-        rho_s = (1 - shrink) * rho + shrink * np.eye(3)
-
-        D = np.diag(sigmas)
-        Sigma = D @ rho_s @ D
-
-        port_vol = math.sqrt(u @ Sigma @ u)
-        k = ceiling / port_vol
-
-        w = k * u
-        vol_check = math.sqrt(w @ Sigma @ w)
-        assert abs(vol_check - ceiling) < 1e-10
 
 
 class TestStressGoldens:
