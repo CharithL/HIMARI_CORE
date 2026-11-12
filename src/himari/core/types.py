@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -45,7 +45,9 @@ class QualityFlag(str, enum.Enum):
     ACTION_MISMATCH = "ACTION_MISMATCH"
     SOURCE_MISMATCH = "SOURCE_MISMATCH"
     FX_STALE = "FX_STALE"
+    FX_FILLED = "FX_FILLED"  # latest earlier FX rate used, within the allowed age (§5.5)
     RATE_STALE = "RATE_STALE"
+    ZERO_VOLUME = "ZERO_VOLUME"
 
 
 class SafetyState(str, enum.Enum):
@@ -75,9 +77,10 @@ class Bar(BaseModel):
     open: float
     high: float
     low: float
-    close: float
+    close: float  # unadjusted
     volume: int
     source: str
+    adj_close: float | None = None  # vendor split+distribution adjusted close, for Q5
     version: int = 1
     observed_at_utc: datetime | None = None
     released_at_utc: datetime | None = None
@@ -88,11 +91,25 @@ class CorporateAction(BaseModel):
     symbol: str
     ex_date: date
     pay_date: date | None = None
-    action_type: str  # "cash" or "split"
-    amount: Decimal | None = None  # distribution per share or split ratio
+    action_type: Literal["cash", "split"]
+    amount: Decimal  # cash per post-split share, or split ratio (2.0 = two-for-one)
     currency: Currency | None = None
     source: str = ""
     version: int = 1
+    observed_at_utc: datetime | None = None
+    released_at_utc: datetime | None = None
+
+
+class SeriesObservation(BaseModel):
+    """One value of a daily scalar series: FXUSDCAD (CAD per USD) or AVG.INTWO (% per year)."""
+
+    series: str
+    obs_date: date
+    value: float
+    source: str
+    version: int = 1
+    observed_at_utc: datetime | None = None
+    released_at_utc: datetime | None = None
 
 
 class Order(BaseModel):
