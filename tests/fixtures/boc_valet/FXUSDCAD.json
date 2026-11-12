@@ -1,0 +1,11 @@
+{
+"terms":{"url":"https://www.bankofcanada.ca/terms/"},
+"seriesDetail":{"FXUSDCAD":{"label":"USD/CAD","description":"SYNTHETIC test values in the Valet response format","dimension":{"key":"d","name":"date"}}},
+"observations":[
+{"d":"2025-06-26","FXUSDCAD":{"v":"1.3650"}},
+{"d":"2025-06-27","FXUSDCAD":{"v":"1.3672"}},
+{"d":"2025-06-30","FXUSDCAD":{"v":""}},
+{"d":"2025-07-02","FXUSDCAD":{"v":"1.3611"}},
+{"d":"2025-07-03","FXUSDCAD":{"v":"1.3598"}}
+]
+}

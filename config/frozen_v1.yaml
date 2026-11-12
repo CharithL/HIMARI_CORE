@@ -108,6 +108,7 @@ data_quality:
   cross_source_tol: 0.005
   fx_max_age_calendar_days: 3
   rate_max_age_business_days: 5
+  fx_bridge_max_calendar_days: 7    # amendment v1.2
 
 sources:
   boc_valet_base: https://www.bankofcanada.ca/valet

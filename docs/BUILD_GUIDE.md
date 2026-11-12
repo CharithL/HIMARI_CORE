@@ -1,6 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
+Amendments v1.1 and v1.2, 11 November 2026: data-layer clarifications in §5.3, §5.4, §5.5 and §6, marked *(v1.1)* or *(v1.2)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -151,10 +152,10 @@ Respect each provider's terms. Never scrape sites that forbid it. If the network
 ### 5.3 Storage and versioning
 
 - `data/raw/{source}/…`: every pull, stored unchanged.
-- `data/clean/bars.parquet`: symbol, session_date, open, high, low, close, volume, source, version, observed_at_utc, released_at_utc, quality_flags.
-- `data/clean/actions.parquet`: symbol, ex_date, pay_date, type (`cash` or `split`), amount or ratio, currency, source, version.
+- `data/clean/bars.parquet`: symbol, session_date, open, high, low, close, volume, source, version, observed_at_utc, released_at_utc, quality_flags, and *(v1.1)* `adj_close`: the vendor's split- and distribution-adjusted close, used only by Q5. `close` stays unadjusted.
+- `data/clean/actions.parquet`: symbol, ex_date, pay_date, type (`cash` or `split`, nothing else), amount or ratio, currency, source, version. *(v1.1)* A cash amount is per post-split share.
 - `data/clean/fx.parquet` and `data/clean/rates.parquet`.
-- **Corrections never overwrite.** A correction is a new version row. Any replay can rebuild "what was known at time t" by filtering `released_at_utc <= t`.
+- **Corrections never overwrite.** A correction is a new version row. Any replay can rebuild "what was known at time t" by filtering `released_at_utc <= t`. *(v1.1)* `released_at_utc` follows the release times in §5.4; a correction (version 2 or later) is released at its `observed_at_utc`.
 - `state/himari.sqlite` holds decisions, orders, fills, the ledger and risk states. `state/trials.sqlite` is the research trial ledger.
 
 ### 5.4 Calendars and decision timing
@@ -163,6 +164,16 @@ Respect each provider's terms. Never scrape sites that forbid it. If the network
 - Each instrument uses its own exchange calendar (`XTSE` for the TSX funds, `XNAS` for PDBC). At decision time, use each instrument's last completed session.
 - **Execution** happens in the next session of each instrument's own exchange.
 - Daily jobs run after the time set by `schedule.daily_job_after_et` (default 18:30 ET). By then the Bank of Canada FX rate and vendor end-of-day data are available.
+- *(v1.1)* **Release times.** Every stored row gets `released_at_utc` from these rules, so as-of filtering enforces them:
+
+  | Data | Known from |
+  |---|---|
+  | End-of-day bars for session t | `schedule.daily_job_after_et` (18:30 ET) on t |
+  | Corporate action with ex-date t | 18:30 ET on t |
+  | `FXUSDCAD` for day t | 16:30 ET on t |
+  | CORRA (`AVG.INTWO`) for day t | 11:00 ET on the next Bank of Canada business day (published about 09:00 ET and may be republished until 11:00 ET) |
+
+- *(v1.1)* **Bank of Canada business days** are the weekdays not on the Bank's published holiday list, kept in `config/calendars/boc_holidays.yaml` with each entry's source URL (not the XTSE calendar: the TSX trades on Remembrance Day, the Bank does not publish). Q8 counts these days. A year is used only once its list is complete; in a year not covered, a CORRA value is treated as released when it was observed and every weekday counts toward staleness, so neither can err early.
 
 ### 5.5 CAD total-return index (one per instrument)
 
@@ -176,7 +187,8 @@ wealth index     W_t     = W_{t-1} * (1 + r_cad_t),   W_0 = 1
 ```
 
 - CAD-listed foreign-equity funds already include currency effects. Never convert them twice.
-- If the Bank of Canada has no rate for a US session date, use the latest earlier rate (at most 3 calendar days old) and set a flag.
+- If the Bank of Canada has no rate for a US session date, use the latest earlier rate (at most 3 calendar days old) and set a flag (*(v1.1)* `FX_FILLED`).
+- *(v1.2)* **FX bridging, for the index history only.** A US session whose latest rate is older than 3 days is inside a gap: it gets no CAD return of its own (`FX_BRIDGED`). The first session with a usable rate books the compounded return, `prod(1 + r_loc) * X_new / X_old - 1`, also flagged `FX_BRIDGED`; its `released_at` is no earlier than that rate's publication, so a replay cannot see it early. A bridged multi-day return enters the EWMA as one observation. If the two rates are more than `data_quality.fx_bridge_max_calendar_days` (7) calendar days apart, the gap is a data outage (`FX_OUTAGE`): the instrument is in `DATA_FAULT` and the index has no value after the gap until a person runs `himari data confirm FXUSDCAD <first rate date after the gap>`. Bridging never unlocks a trade: Q7 at decision time is unchanged.
 - The signal index uses **gross** distributions. The account ledger applies withholding tax (§9.4).
 - Test the split-and-distribution-on-the-same-day edge case explicitly.
 
@@ -201,11 +213,11 @@ Port the validators from `layer-0-data-quality-monitor` (Appendix E). Replace it
 | Q2 | OHLC sane | `0 < low <= min(open, close) <= max(open, close) <= high`, and volume ≥ 0 | `INVALID` → fault |
 | Q3 | Order | Dates strictly increasing, no duplicates, no future dates | `INVALID` → fault |
 | Q4 | Jump | `abs(close / prev_close - 1) > 0.15` with no corporate action that day | `ANOMALY` → fault until a person runs `himari data confirm` |
-| Q5 | Actions reconcile | Our total-return ratio across each ex-date agrees with the vendor-adjusted ratio within 0.10% | `ACTION_MISMATCH` → fault |
-| Q6 | Cross-source | Primary and cross-check closes differ by at most 0.5% | `SOURCE_MISMATCH` → fault |
-| Q7 | FX present | `FXUSDCAD` for the date, or the latest rate at most 3 calendar days old | `FX_STALE` → fault for PDBC and USD cash valuation |
-| Q8 | Cash rate present | CORRA at most 5 business days old | `RATE_STALE` → use the last value and set a flag |
-| Q9 | Zero volume | A session with zero volume | Warning only |
+| Q5 | Actions reconcile | *(v1.1)* On **every** session, our total-return ratio `S_t·(P_t + D_t)/P_{t−1}` agrees with the vendor-adjusted ratio `adj_t/adj_{t−1}` within 0.10% (`data_quality.action_reconcile_tol`). On days without an action this catches distributions and splits missing from our records. A session without an adjusted close cannot be reconciled | `ACTION_MISMATCH` → fault |
+| Q6 | Cross-source | Primary and cross-check closes differ by at most 0.5% on every date both sources have. *(v1.1)* A missing cross-check on the latest (decision) bar is a fault; a missing cross-check on an older date is a warning, counted in the weekly report. A missing cross-check never blocks a cut | `SOURCE_MISMATCH` → fault |
+| Q7 | FX present | `FXUSDCAD` for the date, or the latest rate at most 3 calendar days old (*(v1.1)* flagged `FX_FILLED`). *(v1.2)* In the history, an FX gap longer than 7 calendar days is an outage | `FX_STALE` → fault for PDBC and USD cash valuation. *(v1.2)* `FX_OUTAGE` → fault until confirmed with `himari data confirm` |
+| Q8 | Cash rate present | CORRA at most 5 business days old (*(v1.1)* Bank of Canada business days, §5.4) | `RATE_STALE` → use the last value and set a flag |
+| Q9 | Zero volume | A session with zero volume | Warning only (*(v1.1)* `ZERO_VOLUME`) |
 
 **Outcome:** each instrument is either `OK` or `FAULT`. A `FAULT` blocks additions to that instrument; cuts are always allowed. Faults appear on the dashboard and in the weekly report. A data fault never blocks a risk reduction.
 
@@ -870,6 +882,7 @@ data_quality:
   cross_source_tol: 0.005
   fx_max_age_calendar_days: 3
   rate_max_age_business_days: 5
+  fx_bridge_max_calendar_days: 7    # amendment v1.2
 
 sources:
   boc_valet_base: https://www.bankofcanada.ca/valet
@@ -1078,3 +1091,12 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
   - After scaling: worst single-factor 0.029591 and joint 0.050000.
 - **MinTRL** (normal returns, one-sided 95%, `SR* = 0`): about 10.82 years at an annual Sharpe of 0.5 and about 2.71 years at 1.0.
 - **PSR property tests:** `PSR(SR*) = 0.5` when `SR = SR*`. DSR falls as `N` rises, other things equal.
+
+---
+
+## Appendix G: Amendments
+
+| Version | Date | Approved by | Changes |
+|---|---|---|---|
+| v1.1 | 11 November 2026 | User | §5.3: `bars.parquet` adds `adj_close`; action type is `cash` or `split` only; corrections are released at `observed_at_utc`. §5.4: release times for bars, actions, `FXUSDCAD` (16:30 ET same day) and CORRA (11:00 ET next Bank of Canada business day); Bank of Canada business days from the Bank's published holiday list. §5.5: `FX_FILLED` flag. §6: Q5 runs on every session with the existing 0.10% tolerance; Q6 missing-cross-check rule; flags `FX_FILLED` and `ZERO_VOLUME`. No parameter changed. |
+| v1.2 | 11 November 2026 | User | §5.5: FX bridging for the index history (`FX_BRIDGED`), capped at 7 calendar days; longer gaps are outages (`FX_OUTAGE`, `DATA_FAULT` until confirmed). §6 Q7: outage check in the history; decision-time Q7 unchanged. New parameter `data_quality.fx_bridge_max_calendar_days: 7` in `frozen_v1.yaml` (Appendix B); the config hash changes. |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 import typer
@@ -22,6 +23,17 @@ def _default_config_path() -> Path:
     return Path("config/frozen_v1.yaml")
 
 
+_DEFAULT_HOLIDAYS = Path("config/calendars/boc_holidays.yaml")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_date(value: str | None, default: date) -> date:
+    return date.fromisoformat(value) if value else default
+
+
 @config_app.command("hash")
 def config_hash_cmd(
     config: Path = typer.Option(_default_config_path(), help="Path to config YAML"),
@@ -36,27 +48,130 @@ def config_hash_cmd(
 
 @data_app.command("update")
 def data_update(
-    source: str = typer.Option(..., help="Source: vendor|ibkr|boc|csv"),
+    source: str = typer.Option(..., help="Source: csv|boc|vendor|ibkr"),
     from_date: str = typer.Option(None, "--from", help="Start date YYYY-MM-DD"),
+    to_date: str = typer.Option(None, "--to", help="End date YYYY-MM-DD (default today)"),
+    csv_dir: Path = typer.Option(None, "--dir", help="CSV root (bars/, actions/, series/)"),
+    name: str = typer.Option("csv", help="Source name stored with CSV rows"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Bank of Canada holiday file"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root (raw/ and clean/)"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
-    """Pull fresh data from a source."""
-    typer.echo(f"[M1] data update from {source} (not yet implemented)")
+    """Pull data from a source into versioned storage."""
+    from himari.core.config import load_config
+    from himari.data.calendars import load_boc_holidays
+    from himari.data.ingest import (
+        SeriesNames,
+        ingest_actions,
+        ingest_bars,
+        ingest_boc,
+        ingest_series_source,
+    )
+    from himari.data.sources import BocValetSource, CsvSource
+    from himari.data.storage import AppendResult, RawStore, VersionedStore
+
+    if source == "vendor":
+        typer.echo("No end-of-day vendor chosen yet (build guide §20).", err=True)
+        raise typer.Exit(1)
+    if source == "ibkr":
+        typer.echo("IBKR data arrives in M7.", err=True)
+        raise typer.Exit(1)
+    if source not in ("csv", "boc"):
+        raise typer.BadParameter(f"unknown source {source!r}")
+
+    cfg = load_config(config)
+    start = _parse_date(from_date, date(2000, 1, 1))
+    end = _parse_date(to_date, _utc_now().date())
+    store = VersionedStore(data_dir / "clean")
+    names = SeriesNames(cfg.sources.fx_series, cfg.sources.cash_rate_series)
+    boc_days = load_boc_holidays(holidays)
+    observed = _utc_now()
+    eod = time.fromisoformat(cfg.schedule.daily_job_after_et)
+    results: dict[str, dict[str, AppendResult]] = {}
+    if source == "csv":
+        if csv_dir is None:
+            raise typer.BadParameter("--dir is required for --source csv")
+        src = CsvSource(csv_dir, name=name)
+        symbols = [i.symbol for i in cfg.stage1.instruments()]
+        results["bars"] = ingest_bars(src, store, symbols, start, end, observed, eod)
+        results["actions"] = ingest_actions(src, store, symbols, start, end, observed, eod)
+        results["series"] = ingest_series_source(src, store, names, boc_days, start, end, observed)
+    else:
+        boc = BocValetSource(cfg.sources.boc_valet_base)
+        raw = RawStore(data_dir / "raw")
+        results["series"] = ingest_boc(boc, raw, store, names, boc_days, start, end, observed)
+    for table, by_key in results.items():
+        for key, r in by_key.items():
+            typer.echo(f"{table:8} {key:10} +{r.added} new, {r.corrected} corrected")
 
 
 @data_app.command("check")
-def data_check() -> None:
-    """Run the data quality gate and print faults."""
-    typer.echo("[M1] data check (not yet implemented)")
+def data_check(
+    as_of: str = typer.Option(None, help="Decision date YYYY-MM-DD (default today)"),
+    primary: str = typer.Option("csv", help="Primary source name"),
+    crosscheck: str = typer.Option(None, help="Cross-check source name"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Bank of Canada holiday file"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root"),
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+) -> None:
+    """Run the data-quality gate as of a decision time and print faults."""
+    from himari.core.config import load_config
+    from himari.data.calendars import last_completed_session, load_boc_holidays, release_utc
+    from himari.data.storage import VersionedStore
+    from himari.quality.checks import Severity
+    from himari.quality.confirmations import ConfirmationStore
+    from himari.quality.gate import QualityInputs, run_quality_gate
+
+    cfg = load_config(config)
+    day = _parse_date(as_of, _utc_now().date())
+    as_of_utc = release_utc(day, time.fromisoformat(cfg.schedule.daily_job_after_et))
+    store = VersionedStore(data_dir / "clean")
+    instruments = cfg.stage1.instruments()
+    codes = cfg.calendars.by_exchange
+    inputs = QualityInputs(
+        instruments=instruments,
+        bars=store.bars(primary, as_of_utc),
+        actions=store.actions(primary, as_of_utc),
+        crosscheck=store.bars(crosscheck, as_of_utc) if crosscheck else {},
+        fx=store.series(cfg.sources.fx_series, as_of_utc),
+        corra=store.series(cfg.sources.cash_rate_series, as_of_utc),
+        last_sessions={
+            i.symbol: last_completed_session(codes[i.exchange.value], as_of_utc)
+            for i in instruments
+        },
+        master_session=last_completed_session(cfg.calendars.master, as_of_utc),
+        as_of_date=day,
+        boc_days=load_boc_holidays(holidays),
+        fx_series=cfg.sources.fx_series,
+        confirmed=ConfirmationStore(state_dir / "confirmations.jsonl").confirmed(),
+    )
+    report = run_quality_gate(inputs, cfg.data_quality)
+    typer.echo(f"Data-quality gate as of {as_of_utc.isoformat()}")
+    for sym, q in report.instruments.items():
+        warnings = sum(1 for r in q.results if r.severity == Severity.WARN)
+        typer.echo(f"  {sym:6} {q.status:5} faults={len(q.faults)} warnings={warnings}")
+        for r in q.faults:
+            flag = r.flag.value if r.flag else ""
+            typer.echo(f"      {r.check} {flag} {r.session_date or ''} {r.detail}")
+    for r in report.portfolio:
+        if r.severity != Severity.PASS:
+            typer.echo(f"  portfolio {r.check} {r.severity.value} {r.detail}")
 
 
 @data_app.command("confirm")
 def data_confirm(
-    symbol: str = typer.Argument(...),
-    date: str = typer.Argument(...),
-    reason: str = typer.Option(..., help="Why this anomaly is accepted"),
+    symbol: str = typer.Argument(..., help="Instrument, or FXUSDCAD for an FX outage"),
+    day: str = typer.Argument(..., metavar="DATE", help="Session date YYYY-MM-DD"),
+    reason: str = typer.Option(..., help="Why this anomaly or outage is accepted"),
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
 ) -> None:
-    """Manually confirm a data anomaly."""
-    typer.echo(f"[M1] confirming {symbol} {date}: {reason} (not yet implemented)")
+    """Record that a person accepted a data anomaly (Q4) or an FX outage (Q7)."""
+    from himari.quality.confirmations import ConfirmationStore
+
+    store = ConfirmationStore(state_dir / "confirmations.jsonl")
+    store.add(symbol, date.fromisoformat(day), reason, _utc_now())
+    typer.echo(f"confirmed {symbol} {day}: {reason}")
 
 
 @app.command()

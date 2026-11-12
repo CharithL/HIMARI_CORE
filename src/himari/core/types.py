@@ -46,6 +46,8 @@ class QualityFlag(str, enum.Enum):
     SOURCE_MISMATCH = "SOURCE_MISMATCH"
     FX_STALE = "FX_STALE"
     FX_FILLED = "FX_FILLED"  # latest earlier FX rate used, within the allowed age (§5.5)
+    FX_BRIDGED = "FX_BRIDGED"  # inside an FX gap, or the session booking the bridged return (v1.2)
+    FX_OUTAGE = "FX_OUTAGE"  # FX gap longer than the bridge cap: fault until confirmed (v1.2)
     RATE_STALE = "RATE_STALE"
     ZERO_VOLUME = "ZERO_VOLUME"
 

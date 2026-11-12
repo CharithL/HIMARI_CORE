@@ -124,6 +124,7 @@ class DataQualityConfig(BaseModel):
     cross_source_tol: float = 0.005
     fx_max_age_calendar_days: int = 3
     rate_max_age_business_days: int = 5
+    fx_bridge_max_calendar_days: int = 7
 
 
 class SourcesConfig(BaseModel):

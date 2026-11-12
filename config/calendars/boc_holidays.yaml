@@ -1,0 +1,21 @@
+# Bank of Canada holidays, entered by hand from the Bank's published schedule (§5.4, v1.1).
+# Each entry keeps its source URL and retrieval date. A year goes in covered_years only once
+# every holiday for that year has been entered; uncovered years are handled conservatively
+# (CORRA treated as released when observed; staleness counts every weekday).
+#
+# Open questions for the user (2026-11-11): the schedule page lists only upcoming holidays,
+# and it mixes national and provincial holidays. Which provincial holidays stop FXUSDCAD and
+# CORRA publication, and the source for 2014-2025, are still to be decided.
+
+covered_years: []
+
+holidays:
+  - {date: 2026-11-11, name: Remembrance Day, scope: national,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
+     retrieved: 2026-11-11}
+  - {date: 2026-12-25, name: Christmas Day, scope: national,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
+     retrieved: 2026-11-11}
+  - {date: 2026-12-28, name: Boxing Day, scope: national,
+     url: "https://www.bankofcanada.ca/press/upcoming-events/bank-of-canada-holiday-schedule/",
+     retrieved: 2026-11-11}
