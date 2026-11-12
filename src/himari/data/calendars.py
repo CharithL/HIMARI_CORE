@@ -43,6 +43,18 @@ def last_completed_session(code: str, as_of_utc: datetime) -> date:
     return session.date()  # type: ignore[no-any-return]
 
 
+def session_close_utc(code: str, day: date) -> datetime:
+    close: datetime = get_calendar(code).session_close(pd.Timestamp(day)).to_pydatetime()
+    return close
+
+
+def next_session(code: str, day: date) -> date:
+    """First session strictly after day."""
+    cal = get_calendar(code)
+    nxt: date = cal.date_to_session(pd.Timestamp(day + timedelta(days=1)), direction="next").date()
+    return nxt
+
+
 def weekly_decision_sessions(code: str, start: date, end: date) -> list[date]:
     """Last session of each ISO week: normally Friday, Thursday if Friday is a holiday."""
     week_end = end + timedelta(days=6 - end.weekday())

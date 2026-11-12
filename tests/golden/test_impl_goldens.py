@@ -77,7 +77,7 @@ class TestStressGoldens:
 
     def test_stress_factors_loaded(self) -> None:
         cfg = load_config(CONFIG_PATH)
-        factors = cfg.stress["factors"]
+        factors = cfg.stress.factors
         assert "EQUITY" in factors
         assert "GOLD" in factors
         assert "COMMOD" in factors
@@ -86,19 +86,20 @@ class TestStressGoldens:
 
     def test_stress_factor_magnitudes(self) -> None:
         cfg = load_config(CONFIG_PATH)
-        factors = cfg.stress["factors"]
-        assert factors["EQUITY"]["shock"] == 0.07
-        assert factors["GOLD"]["shock"] == 0.08
-        assert factors["COMMOD"]["shock"] == 0.10
-        assert factors["CAD_UP"]["shock"] == 0.05
+        factors = cfg.stress.factors
+        assert factors["EQUITY"].shock == 0.07
+        assert factors["GOLD"].shock == 0.08
+        assert factors["COMMOD"].shock == 0.10
+        assert factors["CAD_UP"].shock == 0.05
+        assert factors["CA_YIELD"].shock_bp == 50
 
     def test_single_factor_limit_from_config(self) -> None:
         cfg = load_config(CONFIG_PATH)
-        assert cfg.stress["single_factor_limit"] == 0.03
+        assert cfg.stress.single_factor_limit == 0.03
 
     def test_joint_limit_from_config(self) -> None:
         cfg = load_config(CONFIG_PATH)
-        assert cfg.stress["joint_limit"] == 0.05
+        assert cfg.stress.joint_limit == 0.05
 
 
 class TestConfigHashGoldens:

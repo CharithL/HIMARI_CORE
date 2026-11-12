@@ -20,3 +20,12 @@ def check_cut_only(gate: str, before: Mapping[str, float], after: Mapping[str, f
             raise CutOnlyError(f"{gate}: {symbol} grew from {w_in} to {w_out}")
         if w_out != 0.0 and (w_out > 0) != (w_in > 0):
             raise CutOnlyError(f"{gate}: {symbol} flipped from {w_in} to {w_out}")
+
+
+def no_additions(target: float, held: float) -> float:
+    """Exposure in the target's direction may not exceed what is held now; cuts pass."""
+    if target > 0:
+        return min(target, max(held, 0.0))
+    if target < 0:
+        return max(target, min(held, 0.0))
+    return 0.0

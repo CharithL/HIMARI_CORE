@@ -5,8 +5,12 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from himari.risk.state_machine import SafetyStore
 
 app = typer.Typer(name="himari", help="HIMARI Core: rules-based multi-asset trend following")
 
@@ -279,28 +283,81 @@ def dashboard() -> None:
     typer.echo("[M7] dashboard (not yet implemented)")
 
 
+def _safety(state_dir: Path) -> SafetyStore:
+    from himari.risk.state_machine import SafetyStore
+
+    return SafetyStore(state_dir / "himari.sqlite", kill_file=state_dir / "KILL")
+
+
+def _actor() -> str:
+    import getpass
+
+    return getpass.getuser()
+
+
 @app.command("kill")
 def kill(
     reason: str = typer.Option(..., help="Why the kill switch is activated"),
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
 ) -> None:
-    """Activate the kill switch — cancels open orders, blocks new ones."""
-    typer.echo(f"[M3] KILL activated: {reason} (not yet implemented)")
+    """Activate the kill switch: no new orders, open orders cancelled; nothing is liquidated."""
+    try:
+        _safety(state_dir).kill(reason, _actor(), _utc_now())
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"KILL active: {reason.strip()}")
 
 
 @app.command("unkill")
 def unkill(
     reason: str = typer.Option(..., help="Why the kill switch is being cleared"),
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
 ) -> None:
-    """Clear the kill switch."""
-    typer.echo(f"[M3] KILL cleared: {reason} (not yet implemented)")
+    """Clear the kill switch (also removes a KILL file in the state folder)."""
+    try:
+        event = _safety(state_dir).unkill(reason, _actor(), _utc_now())
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    removed = " (KILL file removed)" if event.detail.get("kill_file_removed") else ""
+    typer.echo(f"KILL cleared{removed}: {reason.strip()}")
 
 
 @app.command("resume")
 def resume(
     reason: str = typer.Option(..., help="Why the suspension is being cleared"),
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
-    """Clear a drawdown suspension — requires a reason."""
-    typer.echo(f"[M3] SUSPENDED cleared: {reason} (not yet implemented)")
+    """Clear a drawdown suspension; requires a reason and writes a signed record."""
+    from himari.core.config import load_config
+    from himari.risk.state_machine import DrawdownTracker, ResumeRefusedError
+
+    tracker = DrawdownTracker(_safety(state_dir), load_config(config).drawdown)
+    try:
+        status = tracker.resume(reason, _actor(), _utc_now())
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except ResumeRefusedError as exc:
+        typer.echo(f"Resume refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Drawdown state now {status.state.value} (drawdown {status.drawdown:.2%})")
+
+
+@app.command("status")
+def status(
+    state_dir: Path = typer.Option(Path("state"), help="State root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+) -> None:
+    """Show the persisted safety states and whether their record chain is intact."""
+    from himari.core.config import load_config
+    from himari.risk.state_machine import DrawdownTracker
+
+    store = _safety(state_dir)
+    dd = DrawdownTracker(store, load_config(config).drawdown).status()
+    typer.echo(f"KILL         {'ON' if store.kill_active() else 'off'}")
+    typer.echo(f"VENUE_FAULT  {'ON' if store.venue_fault_active() else 'off'}")
+    typer.echo(f"DRAWDOWN     {dd.state.value} (drawdown {dd.drawdown:.2%})")
+    typer.echo(f"record chain {'intact' if store.verify() else 'BROKEN'}")
 
 
 @app.command("promote")

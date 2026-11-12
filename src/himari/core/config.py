@@ -111,6 +111,31 @@ class RebalanceConfig(BaseModel):
     fx_funding_buffer: float = 0.01
 
 
+class EventsConfig(BaseModel):
+    window: str = "decision_close_to_execution_end"
+    rule: str = "no_additions"
+    map: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class StressFactor(BaseModel):
+    shock: float | None = None  # return move, e.g. 0.07 for +/-7%
+    shock_bp: float | None = None  # yield move in basis points
+
+
+class BondLoading(BaseModel):
+    duration: float
+    convexity: float
+
+
+class StressConfig(BaseModel):
+    factors: dict[str, StressFactor] = Field(default_factory=dict)
+    loadings: dict[str, dict[str, float | BondLoading]] = Field(default_factory=dict)
+    single_factor_limit: float = 0.03
+    joint_scenario: dict[str, float] = Field(default_factory=dict)
+    joint_limit: float = 0.05
+    diagnostic_all_adverse_including_fx: bool = True
+
+
 class DrawdownConfig(BaseModel):
     halve_at: float = -0.10
     suspend_at: float = -0.15
@@ -205,10 +230,9 @@ class FrozenConfig(BaseModel):
     research: ResearchConfig
     promotion: PromotionConfig
 
-    # These are loaded but not individually typed for now
-    events: dict[str, Any] = Field(default_factory=dict)
-    stress: dict[str, Any] = Field(default_factory=dict)
-    crypto_comparator: dict[str, Any] = Field(default_factory=dict)
+    events: EventsConfig = Field(default_factory=EventsConfig)
+    stress: StressConfig = Field(default_factory=StressConfig)
+    crypto_comparator: dict[str, Any] = Field(default_factory=dict)  # M9
 
     model_config = {"extra": "forbid"}
 

@@ -4,6 +4,32 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### M3 — Gates and state machine (2026-11-12)
+- `himari.gates.pipeline.run_gates`: data -> volatility ceiling -> event -> stress -> drawdown ->
+  faults and kill switch, with rule 1 checked after every gate (a violation raises).
+- `gates.ceiling`: volatility ceiling (scale to 8%) and the daily safety check (above 10%, cut
+  the holdings back to 8%).
+- `gates.events`: event calendar loader for `config/events/events_YYYY.yaml` (unknown types and
+  times without a timezone are errors), the decision-close-to-execution-close window, a coverage
+  report naming missing event types per year, and the no-additions event gate. The 2015-2025
+  archive is not in the repo yet.
+- `risk.stress` and `gates.stress`: factor shocks, the bond price change, single-factor scenarios
+  in both directions, the joint scenario, the CAD +5% all-adverse diagnostic (logged only), and
+  `scale = min(1, 0.03 / worst single, 0.05 / joint)`.
+- `risk.state_machine`: kill switch (command or `state/KILL` file), venue fault and drawdown state
+  (NORMAL / HALVED / SUSPENDED) in `state/himari.sqlite`. Records are append-only (UPDATE and
+  DELETE are refused by triggers) and chained by SHA-256 with the OS user, UTC time and reason;
+  nothing expires. Drawdown thresholds are compared with a 1e-12 tolerance so an exact -10% or
+  -15% is never missed through floating point. `resume` is refused while the drawdown is still at
+  or below -15%.
+- KILL output: the weights get no additions and the gate log sets `orders_blocked`, which the
+  order stage (M4) will honour by sending nothing, cuts included.
+- CLI: `himari kill`, `unkill`, `resume` (all need a reason) and `himari status`.
+- Config: `events` and `stress` sections are now typed models (the YAML and its hash are
+  unchanged).
+- Tests: cut-only property test over the whole pipeline, Appendix F stress goldens through the
+  real functions, persistence tests (restart, no expiry, reasons, KILL file, append-only, chain).
+
 ### Amendment v1.4 — sizing order and common scale (2026-11-12, approved by the user)
 - §7.3: `k = 0.08 / sqrt(b' rho_s b)` over the whole frozen universe; an instrument without 252
   sessions enters with zero correlation, weight 0 and its budget in cash. Caps and the cash

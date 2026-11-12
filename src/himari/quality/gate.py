@@ -17,7 +17,7 @@ from himari.core.types import (
     Instrument,
     SeriesObservation,
 )
-from himari.gates.invariants import check_cut_only
+from himari.gates.invariants import check_cut_only, no_additions
 from himari.quality.checks import (
     CheckResult,
     Severity,
@@ -112,15 +112,6 @@ def run_quality_gate(inp: QualityInputs, cfg: DataQualityConfig) -> QualityRepor
     return QualityReport(instruments=instruments, portfolio=[*usd_cash, *rate])
 
 
-def _no_additions(target: float, held: float) -> float:
-    """Exposure in the target's direction may not exceed what is held now."""
-    if target > 0:
-        return min(target, max(held, 0.0))
-    if target < 0:
-        return max(target, min(held, 0.0))
-    return 0.0
-
-
 def apply_data_gate(
     weights_in: Mapping[str, float],
     holdings: Mapping[str, float],
@@ -134,7 +125,7 @@ def apply_data_gate(
         if quality is not None and quality.status == "OK":
             out[sym] = w
             continue
-        out[sym] = _no_additions(w, holdings.get(sym, 0.0))
+        out[sym] = no_additions(w, holdings.get(sym, 0.0))
         if out[sym] != w:
             details[sym] = f"data fault: target {w} capped at {out[sym]}"
     check_cut_only("data", weights_in, out)
