@@ -20,15 +20,16 @@ from tests.integration.test_fixture_ingest import CFG, EOD, NAMES, START, ingest
 CURRENCY = {i.symbol: i.currency for i in CFG.stage1.instruments()}
 DECISION = date(2025, 12, 31)
 
-# Weights from the fixture decision on 2025-12-31. Update only on purpose.
+# Weights from the fixture decision on 2025-12-31. Change only with an amendment or a
+# CHANGELOG entry that explains why (last re-pinned for amendment v1.4).
 GOLDEN_WEIGHTS = {
     "VCN": 0.0,
     "VUN": 0.0,
-    "VIU": 0.06913785538933068,
-    "VEE": 0.060514678751290685,
-    "VGV": 0.25,
+    "VIU": 0.06226519411285012,
+    "VEE": 0.05449920594018528,
+    "VGV": 0.22514870385485977,
     "CGL.C": 0.0,
-    "PDBC": 0.18436653294224933,
+    "PDBC": 0.16603954370464696,
     "DLR": 0.0,
 }
 
@@ -69,7 +70,6 @@ class TestFixtureDecision:
         assert w["VCN"] + w["VUN"] + w["VIU"] + w["VEE"] <= 0.40 + 1e-12
         assert w["DLR"] <= 0.15 + 1e-12
         assert all(w[s] == 0.0 for s, f in d.funds.items() if not f.signal.on)
-        assert d.sizing is not None and d.corr is not None
         sigmas = [d.funds[s].sigma_floored or 0.0 for s in d.eligible]
         all_on = d.sizing.all_on
         assert math.sqrt(all_on @ covariance(sigmas, d.corr) @ all_on) == pytest.approx(0.08)
@@ -94,8 +94,29 @@ class TestFixtureDecision:
         }
         a, b = decide(store, day, full), decide(store, day, shocked)
         assert a.weights() == b.weights()
-        assert a.corr is not None and b.corr is not None
         assert np.array_equal(a.corr, b.corr)
+
+    def test_new_fund_without_history_keeps_its_budget_in_cash(self, store: VersionedStore) -> None:
+        """The early-2015 PDBC case (v1.4): PDBC has under 252 sessions, the others are eligible.
+
+        PDBC stays in k with its 20% budget and zero correlation, so the others get no more
+        risk than if PDBC were eligible and uncorrelated; its weight is 0.
+        """
+        late = {
+            s: [b for b in bars if s != "PDBC" or b.session_date >= date(2025, 3, 3)]
+            for s, bars in store.bars("csv").items()
+        }
+        d = decide(store, DECISION, late)
+        assert "PDBC" not in d.eligible and len(d.eligible) == 7
+        assert d.weights()["PDBC"] == 0.0
+        symbols = list(d.funds)
+        p = symbols.index("PDBC")
+        others = [i for i in range(len(symbols)) if i != p]
+        assert np.all(d.corr[p, others] == 0.0)
+        b = np.array([CFG.stage1.budget_for(i) for i in CFG.stage1.instruments()])
+        assert d.sizing.scale == pytest.approx(0.08 / math.sqrt(b @ d.corr @ b), rel=1e-12)
+        k_if_dropped = 0.08 / math.sqrt(b[others] @ d.corr[np.ix_(others, others)] @ b[others])
+        assert d.sizing.scale < k_if_dropped  # its budget is not handed to the others
 
     def test_short_history_is_not_eligible(self, store: VersionedStore) -> None:
         d = decide(store, date(2024, 6, 28))

@@ -16,7 +16,7 @@ import numpy.typing as npt
 
 from himari.risk.covariance import ewma_correlation, shrink_to_identity, tsx_return_matrix
 from himari.risk.ewma import annualized_vol
-from himari.sizing.weights import CapGroup, SizingResult, target_weights
+from himari.sizing.weights import CapGroup, SizingResult, embed_correlation, target_weights
 from himari.strategy.trend import TrendSignal, aligned_levels, trend_signal
 
 if TYPE_CHECKING:
@@ -40,13 +40,12 @@ class Stage1Decision:
     decision_date: date
     funds: dict[str, FundRisk]
     eligible: tuple[str, ...]
-    corr: FloatArray | None  # shrunk correlation over the eligible funds
-    sizing: SizingResult | None
+    corr: FloatArray  # shrunk correlation over the universe; zero for funds not eligible
+    sizing: SizingResult
 
     def weights(self) -> dict[str, float]:
-        """Every fund in the universe; ineligible or off funds hold zero (their budget is cash)."""
-        sized = self.sizing.weights() if self.sizing is not None else {}
-        return {sym: sized.get(sym, 0.0) for sym in self.funds}
+        """Every fund in the universe; funds not eligible or off hold zero (budget in cash)."""
+        return self.sizing.weights()
 
 
 def _upto_index(index: TotalReturnIndex, day: date) -> TotalReturnIndex:
@@ -81,7 +80,8 @@ def stage1_decision(
 
     indices and cash hold each fund's CAD wealth index and cash index on the fund's own
     sessions; tsx_dates are XTSE sessions. A fund is eligible when it has a signal, a
-    volatility and at least init_sessions returns on the common TSX grid.
+    volatility and at least init_sessions returns on the common TSX grid. Every fund in the
+    frozen universe enters k (v1.4); one that is not eligible has zero correlation and weight.
     """
     risk = cfg.risk
     instruments = cfg.stage1.instruments()
@@ -103,29 +103,29 @@ def stage1_decision(
         floored = None if sigma is None else max(sigma, floor)
         funds[sym] = FundRisk(sym, signal, sigma, floored, int(counts[j]))
 
-    eligible = tuple(
-        s
-        for s in symbols
-        if funds[s].signal.eligible
+    mask = [
+        funds[s].signal.eligible
         and funds[s].sigma_floored is not None
         and funds[s].tsx_returns >= risk.init_sessions
-    )
-    if not eligible:
-        return Stage1Decision(decision_date, funds, eligible, None, None)
-
-    cols = [symbols.index(s) for s in eligible]
-    rho = ewma_correlation(tsx[:, cols], risk.corr_decay(), risk.init_sessions)
-    if rho is None:
-        raise RuntimeError("eligible funds lack a common TSX history; eligibility check is wrong")
-    corr = shrink_to_identity(rho, risk.corr_shrink_to_identity)
-    by_symbol = {i.symbol: i for i in instruments}
-    sigmas = [funds[s].sigma_floored for s in eligible]
+        for s in symbols
+    ]
+    eligible = tuple(s for s, ok in zip(symbols, mask, strict=True) if ok)
+    cols = [j for j, ok in enumerate(mask) if ok]
+    block = np.eye(0)
+    if cols:
+        rho = ewma_correlation(tsx[:, cols], risk.corr_decay(), risk.init_sessions)
+        if rho is None:
+            raise RuntimeError("eligible funds lack a common TSX history; eligibility is wrong")
+        block = shrink_to_identity(rho, risk.corr_shrink_to_identity)
+    corr = embed_correlation(mask, block)
     sizing = target_weights(
-        symbols=eligible,
-        budgets=[cfg.stage1.budget_for(by_symbol[s]) for s in eligible],
-        sigmas=[x for x in sigmas if x is not None],
+        symbols=symbols,
+        budgets=[cfg.stage1.budget_for(i) for i in instruments],
+        sigmas=[
+            funds[s].sigma_floored if ok else None for s, ok in zip(symbols, mask, strict=True)
+        ],
         corr=corr,
-        signals=[funds[s].signal.on for s in eligible],
+        signals=[funds[s].signal.on and ok for s, ok in zip(symbols, mask, strict=True)],
         per_instrument_cap=cfg.stage1.caps.per_instrument,
         groups=[CapGroup(g.name, tuple(g.members), g.max) for g in cfg.stage1.caps.groups],
         vol_ceiling=risk.portfolio_vol_ceiling,

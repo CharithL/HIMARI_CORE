@@ -104,20 +104,17 @@ class TestSizingToyCase:
         vol_check = math.sqrt(w_all_on @ Sigma @ w_all_on)
         assert abs(vol_check - 0.08) < 1e-6
 
+        # v1.4: caps on the all-on weights, then the cash constraint, then signals
+        a = np.minimum(w_all_on, 0.25)  # per-instrument cap
+        a[0] = min(a[0], 0.40)  # A alone as a group
+        a[2] = min(a[2], 0.15)  # C cap
+        assert abs(a[0] - 0.25) < 1e-6
+        assert abs(a[1] - 0.25) < 1e-6
+        assert abs(a[2] - 0.15) < 1e-6
+        assert abs(sum(a) - 0.65) < 1e-6  # no cash scaling
+
         signals = [1, 1, 0]
-        w = k * u * np.array(signals)
-
-        # Per-instrument cap: 0.25
-        w = np.minimum(w, 0.25)
-        # Group cap for A alone: 0.40
-        if w[0] > 0.40:
-            w[0] = 0.40
-        # C cap: 0.15
-        w[2] = min(w[2], 0.15)
-
-        assert abs(w[0] - 0.25) < 1e-6
-        assert abs(w[1] - 0.25) < 1e-6
-        assert abs(w[2] - 0.0) < 1e-6
+        w = a * np.array(signals)
         assert abs(sum(w) - 0.50) < 1e-6
 
         final_vol = math.sqrt(w @ Sigma @ w)

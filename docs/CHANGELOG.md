@@ -4,6 +4,21 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.4 — sizing order and common scale (2026-11-12, approved by the user)
+- §7.3: `k = 0.08 / sqrt(b' rho_s b)` over the whole frozen universe; an instrument without 252
+  sessions enters with zero correlation, weight 0 and its budget in cash. Caps and the cash
+  constraint act on the all-on weights `a = k u`; signals come last (`w = a s`), so switching a
+  signal off never raises another instrument's pre-gate weight (rule 6).
+- Appendix F sizing toy case: after caps [0.25, 0.25, 0.15], sum 0.65; after signals
+  [0.25, 0.25, 0]; final volatility 0.038324 (unchanged).
+- Fixture decision golden for 2025-12-31 re-pinned because of this amendment: the cash constraint
+  now binds on the all-on weights (sum 1.11), so VIU 0.0691 -> 0.0623, VEE 0.0605 -> 0.0545,
+  VGV 0.2500 -> 0.2251, PDBC 0.1844 -> 0.1660 (invested 56.4% -> 50.8%). k is unchanged.
+- CI: strict mypy now also covers `sizing`.
+- FX splice log: 2017-01-18 (-0.59%) annotated as a Bank of Canada decision day (CAD fell more
+  than a cent intraday; noon snapshot versus daily average). No action; legacy rows are used only
+  through 2016-12-30.
+
 ### M2 — Strategy and risk (2026-11-12)
 - `himari.strategy.trend`: excess-return trend signal over 252 observations; exactly zero is
   off; fewer than 253 valid observations means not eligible. Observations are the fund's

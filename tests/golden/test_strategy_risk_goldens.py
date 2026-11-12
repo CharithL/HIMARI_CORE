@@ -89,8 +89,10 @@ class TestSizingToyCase:
         all_on = r.all_on
         assert list(all_on) == pytest.approx([0.444444, 0.800000, 0.380952], abs=5e-7)
         assert math.sqrt(all_on @ sigma @ all_on) == pytest.approx(0.08, abs=1e-12)
-        assert list(r.after_signals) == pytest.approx([0.444444, 0.8, 0.0], abs=5e-7)
-        assert list(r.after_caps) == pytest.approx([0.25, 0.25, 0.0], abs=1e-15)
+        # v1.4: caps and the cash constraint act on the all-on weights, signals come last
+        assert list(r.after_caps) == pytest.approx([0.25, 0.25, 0.15], abs=1e-15)
+        assert sum(r.after_caps) == pytest.approx(0.65, abs=1e-15)
+        assert list(r.after_cash) == list(r.after_caps)  # 0.65 <= 1: no cash scaling
         final = r.final
-        assert sum(final) == pytest.approx(0.50, abs=1e-15)  # no cash scaling
+        assert list(final) == pytest.approx([0.25, 0.25, 0.0], abs=1e-15)
         assert math.sqrt(final @ sigma @ final) == pytest.approx(0.038324, abs=5e-7)

@@ -22,6 +22,15 @@ LEGACY_FX_LAST = date(2016, 12, 30)  # last legacy row used
 LEGACY_FX_FINAL = date(2017, 4, 28)  # the Bank stopped updating the legacy series
 FX_FIRST = date(2017, 1, 3)
 
+# Reviewed overlap differences (user, 2026-11-12). The legacy series is only used through
+# 2016-12-30, so these need no action; they are kept so every regenerated log explains them.
+OVERLAP_NOTES = {
+    date(2017, 1, 18): (
+        "Bank of Canada rate decision day: CAD fell more than a cent intraday, so the noon "
+        "snapshot (IEXE0101) and the daily average (FXUSDCAD) differ. Reviewed; no action."
+    ),
+}
+
 
 def splice_fx(
     legacy: Sequence[SeriesObservation], current: Sequence[SeriesObservation]
@@ -62,8 +71,15 @@ def write_overlap_log(rows: Sequence[OverlapRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
-        w.writerow(["date", LEGACY_FX_SERIES, "FXUSDCAD", "diff", "rel_diff"])
+        w.writerow(["date", LEGACY_FX_SERIES, "FXUSDCAD", "diff", "rel_diff", "note"])
         for r in rows:
             w.writerow(
-                [r.obs_date.isoformat(), r.legacy, r.current, f"{r.diff:.6f}", f"{r.rel_diff:.6f}"]
+                [
+                    r.obs_date.isoformat(),
+                    r.legacy,
+                    r.current,
+                    f"{r.diff:.6f}",
+                    f"{r.rel_diff:.6f}",
+                    OVERLAP_NOTES.get(r.obs_date, ""),
+                ]
             )

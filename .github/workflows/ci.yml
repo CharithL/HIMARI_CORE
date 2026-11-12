@@ -26,8 +26,8 @@ jobs:
           uv run ruff check src/ tests/
           uv run ruff format --check src/ tests/
 
-      - name: Mypy strict (core, risk, strategy, execution, data, accounting, quality, gates)
-        run: uv run mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution src/himari/data src/himari/accounting src/himari/quality src/himari/gates
+      - name: Mypy strict (core, risk, strategy, execution, data, accounting, quality, gates, sizing)
+        run: uv run mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution src/himari/data src/himari/accounting src/himari/quality src/himari/gates src/himari/sizing
 
       - name: Pytest
         run: uv run pytest tests/ -x --cov=himari --cov-report=term-missing

@@ -197,8 +197,19 @@ class TestIngestBoc:
         log = tmp_path / "logs" / "fx_splice_overlap.csv"
         write_overlap_log(overlap, log)
         lines = log.read_text(encoding="utf-8").splitlines()
-        assert lines[0] == "date,IEXE0101,FXUSDCAD,diff,rel_diff"
+        assert lines[0] == "date,IEXE0101,FXUSDCAD,diff,rel_diff,note"
         assert lines[1].startswith("2017-01-03,1.348,1.3483,0.000300,")
+        assert lines[1].endswith(",")  # no note for an unreviewed day
+
+    def test_reviewed_overlap_day_is_annotated(self, tmp_path: Path) -> None:
+        day = date(2017, 1, 18)
+        legacy = [SeriesObservation(series="IEXE0101", obs_date=day, value=1.3177, source="t")]
+        current = [SeriesObservation(series="FXUSDCAD", obs_date=day, value=1.3099, source="t")]
+        log = tmp_path / "fx_splice_overlap.csv"
+        write_overlap_log(splice_overlap(legacy, current), log)
+        row = log.read_text(encoding="utf-8").splitlines()[1]
+        assert row.startswith("2017-01-18,1.3177,1.3099,-0.007800,-0.005919,")
+        assert "rate decision day" in row
 
     def test_legacy_not_fetched_after_it_stopped(self, tmp_path: Path) -> None:
         payloads = {s: (VALET / f"{s}.json").read_bytes() for s in ("FXUSDCAD", "AVG.INTWO")}

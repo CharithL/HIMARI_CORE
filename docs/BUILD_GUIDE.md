@@ -1,7 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
-Amendments v1.1 to v1.3, 11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6, marked *(v1.1)*, *(v1.2)* or *(v1.3)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
+Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6) and v1.4 (12 November 2026: §7.3 order and common scale), marked *(v1.1)* to *(v1.4)*. Log in Appendix G. v1.2 adds one parameter, `data_quality.fx_bridge_max_calendar_days`; no existing parameter changed.
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -250,11 +250,12 @@ s_i,t = 1 if m_i,t > 0 else 0                          # exactly 0 means off
 
 1. **Budgets.** `b_i` = class budget (20% per class) ÷ number of instruments in the class. The four equity funds get 5% each.
 2. **Unit weights.** `u_i = b_i / σ_i`.
-3. **Common scale.** Compute `k = 0.08 / sqrt(uᵀ Σ u)` over **all eligible instruments as if every signal were on**. This keeps the remaining instruments from growing when others switch off.
-4. **Apply signals.** `w_i = k * u_i * s_i`.
-5. **Caps** (scale down only): `w_i <= 0.25` per instrument; the equity group (VCN, VUN, VIU, VEE) sum `<= 0.40`, scaled proportionally if exceeded; `w_DLR <= 0.15`.
-6. **Cash constraint.** If `sum(w) > 1`, scale every weight by `1 / sum(w)`.
-7. **Then the gates** in §8 run, scale-only, in their fixed order.
+3. *(v1.4)* **Common scale.** Because `uᵀ Σ u = bᵀ ρ_s b`, compute `k = 0.08 / sqrt(bᵀ ρ_s b)` over the **whole frozen universe, as if every signal were on**. An instrument without 252 sessions of history is included with zero correlation to the others; its weight stays 0 and its budget stays in cash.
+4. *(v1.4)* **All-on weights.** `a_i = k * u_i` (0 for an instrument that is not eligible).
+5. *(v1.4)* **Caps on `a`** (scale down only): `a_i <= 0.25` per instrument; the equity group (VCN, VUN, VIU, VEE) sum `<= 0.40`, scaled proportionally if exceeded; `a_DLR <= 0.15`.
+6. *(v1.4)* **Cash constraint on `a`.** If `sum(a) > 1`, scale every `a_i` by `1 / sum(a)`.
+7. *(v1.4)* **Apply signals.** `w_i = a_i * s_i`. Because caps and the cash constraint act before the signals, switching any signal off never raises another instrument's pre-gate weight (rule 6).
+8. **Then the gates** in §8 run, scale-only, in their fixed order.
 
 The result is often below the 8% ceiling because caps bind. That is by design: never scale up to "use" the ceiling. A golden example is in Appendix F.
 
@@ -1083,7 +1084,7 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 - **Sizing toy case** (3 instruments; budgets 0.5/0.3/0.2; σ = 0.15/0.05/0.07; ρ_AB = −0.2, ρ_AC = 0.1, ρ_BC = 0; shrinkage 0.5; ceiling 8%; caps: 0.25 per instrument, A alone as a 0.40 group, C ≤ 0.15; signals A = 1, B = 1, C = 0):
   - `u = [3.333333, 6.000000, 2.857143]`, `k = 0.133333`
   - all-on weights `[0.444444, 0.800000, 0.380952]`, with volatility exactly 0.080000
-  - after signals `[0.444444, 0.800000, 0]`, after caps `[0.25, 0.25, 0]`, sum 0.50 (no cash scaling)
+  - *(v1.4)* after caps `[0.25, 0.25, 0.15]`, sum 0.65 (no cash scaling); after signals `[0.25, 0.25, 0]`
   - final portfolio volatility 0.038324 (below the ceiling, as designed)
 - **Holm:** with p-values `[0.01, 0.04, 0.03, 0.20]` and α = 0.05, only the first hypothesis is rejected.
 - **Bond price change** (duration 7.5, convexity 70): +50 bp gives −0.036625; −50 bp gives +0.038375.
@@ -1103,3 +1104,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 | v1.1 | 11 November 2026 | User | §5.3: `bars.parquet` adds `adj_close`; action type is `cash` or `split` only; corrections are released at `observed_at_utc`. §5.4: release times for bars, actions, `FXUSDCAD` (16:30 ET same day) and CORRA (11:00 ET next Bank of Canada business day); Bank of Canada business days from the Bank's published holiday list. §5.5: `FX_FILLED` flag. §6: Q5 runs on every session with the existing 0.10% tolerance; Q6 missing-cross-check rule; flags `FX_FILLED` and `ZERO_VOLUME`. No parameter changed. |
 | v1.2 | 11 November 2026 | User | §5.5: FX bridging for the index history (`FX_BRIDGED`), capped at 7 calendar days; longer gaps are outages (`FX_OUTAGE`, `DATA_FAULT` until confirmed). §6 Q7: outage check in the history; decision-time Q7 unchanged. New parameter `data_quality.fx_bridge_max_calendar_days: 7` in `frozen_v1.yaml` (Appendix B); the config hash changes. |
 | v1.3 | 11 November 2026 | User | §5.2: legacy noon rate `IEXE0101` for FX history. §5.4: release time for `IEXE0101` (18:30 ET); Bank of Canada business days from the Bank's publication record, with a forward holiday file (federal holidays plus Ontario Family Day and Civic Holiday) for dates not yet published; disagreements listed by `himari data boc-calendar`. §5.5: FX splice at 2016-12-30 / 2017-01-03 with the 2017 overlap logged; a bridged return is released at the later of the rate's publication and the bar's release. No parameter changed. |
+| v1.4 | 12 November 2026 | User | §7.3: `k = 0.08 / sqrt(bᵀ ρ_s b)` over the whole frozen universe, an instrument without 252 sessions included with zero correlation (weight 0, budget in cash); caps and the cash constraint act on the all-on weights `a = k u`, and signals are applied last (`w = a s`), so switching a signal off never raises another weight (rule 6). Appendix F sizing toy case: after caps `[0.25, 0.25, 0.15]`, sum 0.65; after signals `[0.25, 0.25, 0]`; final volatility 0.038324. No parameter changed. |
