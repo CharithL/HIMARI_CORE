@@ -9,6 +9,9 @@ state/
 research/reports/*.html
 research/reports/*.json
 
+# Virtual environment
+.venv/
+
 # Python
 __pycache__/
 *.pyc

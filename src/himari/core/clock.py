@@ -6,7 +6,7 @@ SimClock replays historical sessions; LiveClock uses wall time.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Protocol
 
 import exchange_calendars as xcals
@@ -37,15 +37,15 @@ class SimClock:
             self._current_date.year,
             self._current_date.month,
             self._current_date.day,
-            23, 59, 59,
-            tzinfo=timezone.utc,
+            23,
+            59,
+            59,
+            tzinfo=UTC,
         )
 
     def sessions(self, exchange: str, start: date, end: date) -> list[Session]:
         cal = xcals.get_calendar(exchange)
-        sched = cal.sessions_in_range(
-            start.isoformat(), end.isoformat()
-        )
+        sched = cal.sessions_in_range(start.isoformat(), end.isoformat())
         return [Session(date=s.date(), exchange=exchange) for s in sched]
 
 
@@ -53,11 +53,9 @@ class LiveClock:
     """Uses wall time for paper and live trading."""
 
     def now_utc(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def sessions(self, exchange: str, start: date, end: date) -> list[Session]:
         cal = xcals.get_calendar(exchange)
-        sched = cal.sessions_in_range(
-            start.isoformat(), end.isoformat()
-        )
+        sched = cal.sessions_in_range(start.isoformat(), end.isoformat())
         return [Session(date=s.date(), exchange=exchange) for s in sched]

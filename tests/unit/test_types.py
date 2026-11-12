@@ -8,7 +8,6 @@ from himari.core.types import (
     Exchange,
     GateLog,
     Instrument,
-    QualityFlag,
     SafetyState,
 )
 

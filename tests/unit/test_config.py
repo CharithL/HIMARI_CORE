@@ -2,10 +2,7 @@
 
 from pathlib import Path
 
-import pytest
-
-from himari.core.config import config_hash, load_config, code_hash
-
+from himari.core.config import code_hash, config_hash, load_config
 
 CONFIG_PATH = Path(__file__).parents[2] / "config" / "frozen_v1.yaml"
 

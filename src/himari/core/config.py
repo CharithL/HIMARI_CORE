@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from himari.core.types import AssetClass, Currency, Exchange, Instrument
 
@@ -75,9 +75,7 @@ class Stage1Config(BaseModel):
 
     def budget_for(self, instrument: Instrument) -> float:
         class_budget = self.class_budget[instrument.asset_class.value]
-        n_in_class = sum(
-            1 for u in self.universe if u["class"] == instrument.asset_class.value
-        )
+        n_in_class = sum(1 for u in self.universe if u["class"] == instrument.asset_class.value)
         return class_budget / n_in_class
 
 
@@ -98,10 +96,10 @@ class RiskConfig(BaseModel):
     daily_safety_multiple: float = 1.25
 
     def vol_decay(self) -> float:
-        return 0.5 ** (1.0 / self.ewma_vol_half_life)
+        return float(0.5 ** (1.0 / self.ewma_vol_half_life))
 
     def corr_decay(self) -> float:
-        return 0.5 ** (1.0 / self.ewma_corr_half_life)
+        return float(0.5 ** (1.0 / self.ewma_corr_half_life))
 
 
 class RebalanceConfig(BaseModel):
@@ -134,21 +132,9 @@ class SourcesConfig(BaseModel):
 
 
 class ResearchWindowsConfig(BaseModel):
-    development_end: str
-    evaluation: list[str]
-    replication: list[str]
-
-    @field_validator("development_end", mode="before")
-    @classmethod
-    def _coerce_date(cls, v: Any) -> str:
-        return str(v) if isinstance(v, date) else v
-
-    @field_validator("evaluation", "replication", mode="before")
-    @classmethod
-    def _coerce_date_list(cls, v: Any) -> list[str]:
-        if isinstance(v, list):
-            return [str(item) if isinstance(item, date) else item for item in v]
-        return v
+    development_end: date
+    evaluation: list[date]
+    replication: list[date]
 
 
 class BootstrapConfig(BaseModel):
@@ -202,6 +188,7 @@ class FrozenConfig(BaseModel):
     @classmethod
     def _coerce_created(cls, v: Any) -> str:
         return str(v) if isinstance(v, date) else v
+
     base_currency: str = "CAD"
     display_timezone: str = "America/Toronto"
     calendars: CalendarConfig
@@ -226,7 +213,8 @@ class FrozenConfig(BaseModel):
 
 def load_yaml(path: Path) -> dict[str, Any]:
     with open(path) as f:
-        return yaml.safe_load(f)
+        result: dict[str, Any] = yaml.safe_load(f)
+        return result
 
 
 def load_config(path: Path) -> FrozenConfig:
@@ -246,10 +234,32 @@ def config_hash(path: Path) -> str:
 
 
 def code_hash(src_dir: Path) -> str:
-    """SHA-256 hash of all .py files under src_dir, sorted by path."""
+    """SHA-256 hash of all .py files under src_dir, sorted by POSIX path.
+
+    Normalizes CRLF → LF so Windows and CI produce the same hash.
+    Paths use forward slashes regardless of platform.
+    """
     h = hashlib.sha256()
     py_files = sorted(src_dir.rglob("*.py"))
     for p in py_files:
-        h.update(str(p.relative_to(src_dir)).encode("utf-8"))
-        h.update(p.read_bytes())
+        rel = p.relative_to(src_dir).as_posix()
+        h.update(rel.encode("utf-8"))
+        content = p.read_bytes().replace(b"\r\n", b"\n")
+        h.update(content)
     return h.hexdigest()
+
+
+def run_hashes(project_root: Path) -> dict[str, str]:
+    """Return hashes for every file that defines a run's identity.
+
+    Every run record must include these so any parameter or code change
+    is traceable in the audit trail.
+    """
+    files = {
+        "config": project_root / "config" / "frozen_v1.yaml",
+        "costs": project_root / "config" / "costs_v1.yaml",
+        "register": project_root / "research" / "register.yaml",
+    }
+    hashes = {name: config_hash(path) for name, path in files.items()}
+    hashes["code"] = code_hash(project_root / "src" / "himari")
+    return hashes

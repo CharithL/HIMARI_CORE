@@ -1,7 +1,12 @@
 .PHONY: setup lint test backtest shadow dashboard clean
 
+VENV := .venv
+UV := uv
+
 setup:
-	pip install -e ".[dev]"
+	$(UV) venv $(VENV) --python 3.11
+	$(UV) pip install -e ".[dev]"
+	$(UV) pip freeze > requirements-lock.txt
 
 lint:
 	ruff check src/ tests/

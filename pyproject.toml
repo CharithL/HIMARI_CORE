@@ -37,6 +37,7 @@ dev = [
     "pytest-cov>=4,<6",
     "ruff>=0.1,<1",
     "mypy>=1.7,<2",
+    "types-PyYAML>=6",
     "pandas-stubs>=2.1",
 ]
 
@@ -53,6 +54,15 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
+ignore = [
+    "B008",   # typer.Option in defaults is the documented pattern
+    "TC003",  # Path/date needed at runtime, not just type-checking
+    "UP042",  # str+Enum is more portable than StrEnum for pydantic serialization
+    "UP017",  # timezone.utc is clearer than UTC alias
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N806", "B905"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -62,7 +72,7 @@ warn_unused_configs = true
 packages = ["himari.core", "himari.risk", "himari.strategy", "himari.execution"]
 
 [[tool.mypy.overrides]]
-module = ["exchange_calendars.*", "ib_async.*", "ibapi.*", "arch.*"]
+module = ["exchange_calendars.*", "ib_async.*", "ibapi.*", "arch.*", "typer.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

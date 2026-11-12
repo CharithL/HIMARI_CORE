@@ -34,13 +34,13 @@ class TestBondPriceChange:
     def test_plus_50bp(self) -> None:
         """Duration 7.5, convexity 70, +50bp."""
         dy = 0.005
-        dp = -7.5 * dy + 0.5 * 70 * dy ** 2
+        dp = -7.5 * dy + 0.5 * 70 * dy**2
         assert abs(dp - (-0.036625)) < 1e-6
 
     def test_minus_50bp(self) -> None:
         """Duration 7.5, convexity 70, -50bp."""
         dy = -0.005
-        dp = -7.5 * dy + 0.5 * 70 * dy ** 2
+        dp = -7.5 * dy + 0.5 * 70 * dy**2
         assert abs(dp - 0.038375) < 1e-6
 
 
@@ -61,7 +61,7 @@ class TestHolmCorrection:
             else:
                 break
 
-        assert rejected[0] is True   # p=0.01 rejected
+        assert rejected[0] is True  # p=0.01 rejected
         assert rejected[1] is False  # p=0.04 not rejected
         assert rejected[2] is False  # p=0.03 not rejected
         assert rejected[3] is False  # p=0.20 not rejected
@@ -85,11 +85,13 @@ class TestSizingToyCase:
         sigmas = [0.15, 0.05, 0.07]
         u = np.array([b / s for b, s in zip(budgets, sigmas)])
 
-        rho = np.array([
-            [1.0, -0.2, 0.1],
-            [-0.2, 1.0, 0.0],
-            [0.1, 0.0, 1.0],
-        ])
+        rho = np.array(
+            [
+                [1.0, -0.2, 0.1],
+                [-0.2, 1.0, 0.0],
+                [0.1, 0.0, 1.0],
+            ]
+        )
         rho_s = 0.5 * rho + 0.5 * np.eye(3)
 
         D = np.diag(sigmas)
@@ -160,20 +162,28 @@ class TestStressExamples:
     def test_stress_example_2_requires_scaling(self) -> None:
         """Worst single CAD_UP = 0.035750, joint = 0.060407, scale = 0.827717."""
         weights = {
-            "VCN": 0.055, "VUN": 0.055, "VIU": 0.055, "VEE": 0.055,
-            "VGV": 0.229, "CGL.C": 0.229, "PDBC": 0.183, "DLR": 0.138,
+            "VCN": 0.055,
+            "VUN": 0.055,
+            "VIU": 0.055,
+            "VEE": 0.055,
+            "VGV": 0.229,
+            "CGL.C": 0.229,
+            "PDBC": 0.183,
+            "DLR": 0.138,
         }
 
         cad_up_exposed = (
-            weights["VUN"] + weights["VIU"] + weights["VEE"]
-            + weights["CGL.C"] + weights["PDBC"] + weights["DLR"]
+            weights["VUN"]
+            + weights["VIU"]
+            + weights["VEE"]
+            + weights["CGL.C"]
+            + weights["PDBC"]
+            + weights["DLR"]
         )
         cad_up_loss = cad_up_exposed * 0.05
         assert abs(cad_up_loss - 0.035750) < 1e-3
 
-        equity_loss = (
-            weights["VCN"] + weights["VUN"] + weights["VIU"] + weights["VEE"]
-        ) * 0.07
+        equity_loss = (weights["VCN"] + weights["VUN"] + weights["VIU"] + weights["VEE"]) * 0.07
         gold_loss = weights["CGL.C"] * 0.08
         commod_loss = weights["PDBC"] * 0.10
         bond_loss = weights["VGV"] * 0.036625

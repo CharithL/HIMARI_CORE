@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: |
+          uv run ruff check src/ tests/
+          uv run ruff format --check src/ tests/
+
+      - name: Mypy strict (core, risk, strategy, execution)
+        run: uv run mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution
+
+      - name: Pytest
+        run: uv run pytest tests/ -x --cov=himari --cov-report=term-missing
