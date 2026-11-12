@@ -1,0 +1,74 @@
+family_alpha: 0.05
+correction: holm
+tests:
+  - id: H1
+    title: 3/6/12-month trend blend vs 12-month rule
+    stage: 1
+    change: "s = (1{m63>0} + 1{m126>0} + 1{m252>0}) / 3"
+    primary: "net Sharpe difference >= 0.10, one-sided paired bootstrap p (enters Holm)"
+    guards: ["CER difference >= 0", "97.5% ES not worse by more than 10%"]
+    window: evaluation
+  - id: H2
+    title: daily-data log-HAR vs EWMA volatility forecast
+    stage: 1
+    change: "log-HAR on 1/5/22-session squared-return components; direct 5-session forecast; 1,260-session window (min 756); monthly refit; ridge 1e-4 on standardized inputs; training-only smearing"
+    primary: "pooled out-of-sample QLIKE at least 5% lower (Diebold-Mariano with block bootstrap)"
+    guards: ["risk-matched CER not lower at 2x costs"]
+    window: evaluation
+  - id: H3
+    title: trend-filtered carry vs plain carry
+    stage: 2
+    change: "hold carry only when the 63/252-session trend signs agree; keep dollar matching"
+    primary: "97.5% daily ES at least 15% lower"
+    guards: ["CER difference lower bound > 0", "net Sharpe not worse by more than 0.05"]
+    window: futures 2015-2025
+  - id: H4
+    title: Student-t GARCH(1,1) vs log-HAR
+    stage: 1
+    depends_on: H2
+    primary: "QLIKE at least 5% lower than both EWMA and log-HAR; compound p = larger of the two"
+    guards: ["no worse ES", "fit fallback on fewer than 1% of forecasts"]
+    window: evaluation
+  - id: H5
+    title: one shallow boosted-tree volatility model (50/50 with log-HAR)
+    stage: 1
+    depends_on: H4
+    change: "depth 2, 100 trees, learning rate 0.03, min leaf 50, fixed seed; H2 features plus 63-session log mean square return"
+    primary: "QLIKE at least 5% lower than each simpler model"
+    guards: ["annual CER +0.10 pp or more", "turnover up by no more than 10%"]
+    window: evaluation
+  - id: H6
+    title: 50% exposure cap before scheduled releases
+    stage: 1
+    change: "affected exposure capped at 50% from the session before the event to the session after"
+    primary: "event-window 97.5% ES at least 15% lower"
+    guards: ["annual CER difference lower bound > 0", "Sharpe not worse by more than 0.10"]
+    window: evaluation (2010-2014 archive used only for development)
+  - id: H7
+    title: one joint risk filter on carry (VIX plus FX volatility)
+    stage: 2
+    change: "trigger = VIX close above its trailing 252-session 90th percentile (prior data only) AND the equal-weight FX-basket 20-session realized vol above 1.25x its 60-session realized vol; while triggered, carry risk is cut to 75%; release only after 5 consecutive non-trigger sessions, at a weekly decision"
+    primary: "97.5% ES at least 15% lower"
+    guards: ["CER difference lower bound > 0", "time under the cap at most 25%"]
+    window: futures 2015-2025
+  - id: H8
+    title: two-state statistical jump-model cap on trend
+    stage: 1
+    change: "features: 20-session EWMA mean return, 20/60-session log volatility; penalty grid {1,10,100} chosen by past-only validation; refit yearly on 5 years; filtering only (no smoothing); cap trend exposure at 50% in the adverse state"
+    primary: "CER difference >= 0.50 pp per year"
+    guards: ["ES at least 10% better"]
+    window: evaluation
+  - id: H9
+    title: monthly instead of weekly rebalancing
+    stage: 1
+    change: "orders on the first session after month-end; same bands; daily safety cuts unchanged"
+    primary: "turnover at least 20% lower"
+    guards: ["CER difference lower bound > 0 at 2x", "ES not worse by more than 10%"]
+    window: evaluation
+  - id: H10
+    title: Fixed Share vs equal weight across sleeves
+    stage: 2
+    change: "weekly updates, eta = 1, alpha = 0.01, bounded loss, max 75% per sleeve, uniform start"
+    primary: "net Sharpe difference >= 0.10"
+    guards: ["annual CER +0.25 pp or more", "ES not worse by more than 10%"]
+    window: futures 2015-2025 plus shadow

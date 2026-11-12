@@ -1,0 +1,30 @@
+version: costs_v1
+multipliers: [1.0, 2.0]
+pass_fail_multiplier: 2.0
+
+etf:
+  per_side_floor_bps: 10
+  impact_bps: 1
+  half_spread_bps:            # placeholder: replace with medians measured over 60 normal sessions
+    {VCN: 3, VUN: 3, VIU: 5, VEE: 5, VGV: 3, CGL.C: 5, PDBC: 5, DLR: 3}
+  commission: broker_schedule # load the current IBKR Canada schedule; never assume zero
+  participation_cap: 0.005
+  carry_forward_sessions: 3
+
+fx_conversion:
+  cost_bps: 5                 # placeholder: replace with the broker's actual conversion cost
+
+withholding:
+  us_listed_distributions: 0.15   # placeholder: confirm with a Canadian tax advisor
+
+stress_spread_multiplier: 5
+
+futures:                      # Stage 2
+  per_contract_usd: 1.50
+  slippage_ticks: 1
+  overrides: {MTN: {slippage_ticks: 2}}
+  micro_fx_per_contract_usd: 1.00
+
+crypto:
+  taker_fee_bps: 40           # placeholder: use the venue's actual schedule
+  min_half_spread_bps: 5

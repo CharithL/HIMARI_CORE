@@ -1,0 +1,36 @@
+# Secrets
+.env
+
+# Data and state (large, local)
+data/
+state/
+
+# Research reports (generated)
+research/reports/*.html
+research/reports/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

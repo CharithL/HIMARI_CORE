@@ -1,0 +1,157 @@
+version: frozen_v1
+created: 2026-11-11
+base_currency: CAD
+display_timezone: America/Toronto
+
+calendars:
+  master: XTSE
+  by_exchange: {TSX: XTSE, NASDAQ: XNAS}
+
+schedule:
+  daily_job_after_et: "18:30"
+  weekly_decision: last_master_session_of_iso_week
+  execution:
+    session_offset: 1
+    window_et: ["15:30", "15:50"]
+    cancel_unfilled_et: "15:55"
+    max_retry_sessions: 2
+    buy_limit: {ask_mult: 1.001, prev_close_mult: 1.005}    # placeholder
+    sell_limit: {bid_mult: 0.999, prev_close_mult: 0.995}   # placeholder
+
+stage1:
+  long_only: true
+  max_gross: 1.0
+  min_history_sessions: 252
+  universe:
+    - {symbol: VCN,   exchange: TSX,    currency: CAD, class: equity}
+    - {symbol: VUN,   exchange: TSX,    currency: CAD, class: equity}
+    - {symbol: VIU,   exchange: TSX,    currency: CAD, class: equity}
+    - {symbol: VEE,   exchange: TSX,    currency: CAD, class: equity}
+    - {symbol: VGV,   exchange: TSX,    currency: CAD, class: gov_bond}
+    - {symbol: CGL.C, exchange: TSX,    currency: CAD, class: gold}
+    - {symbol: PDBC,  exchange: NASDAQ, currency: USD, class: commodity}
+    - {symbol: DLR,   exchange: TSX,    currency: CAD, class: currency}
+  class_budget: {equity: 0.20, gov_bond: 0.20, gold: 0.20, commodity: 0.20, currency: 0.20}
+  within_class_split: equal
+  caps:
+    per_instrument: 0.25
+    groups:
+      - {name: all_equity, members: [VCN, VUN, VIU, VEE], max: 0.40}
+      - {name: usd_cash_fund, members: [DLR], max: 0.15}
+
+signal:
+  type: excess_return_sign
+  lookback_sessions: 252
+  zero_is_off: true
+
+risk:
+  ewma_vol_half_life: 20
+  ewma_corr_half_life: 60
+  corr_shrink_to_identity: 0.50
+  init_sessions: 252
+  annualization: 252
+  vol_floor: {equity: 0.05, gold: 0.05, gov_bond: 0.02, commodity: 0.08, currency: 0.03}
+  portfolio_vol_ceiling: 0.08
+  daily_safety_multiple: 1.25
+
+rebalance:
+  band_abs: 0.005
+  band_rel: 0.10
+  min_order_cad: 100
+  usd_surplus_convert_above_nav: 0.02
+  fx_funding_buffer: 0.01
+
+events:
+  window: decision_close_to_execution_end
+  rule: no_additions
+  map:
+    FOMC:   [VUN, CGL.C, PDBC, DLR]
+    US_CPI: [VUN, CGL.C, PDBC, DLR]
+    US_NFP: [VUN, CGL.C, PDBC, DLR]
+    BOC:    [VCN, VUN, VIU, VEE, VGV, CGL.C, PDBC, DLR]
+    CA_CPI: [VCN, VUN, VIU, VEE, VGV, CGL.C, PDBC, DLR]
+    CA_LFS: [VCN, VUN, VIU, VEE, VGV, CGL.C, PDBC, DLR]
+    ECB:    [VIU]
+    BOJ:    [VIU]
+    SNB:    [VIU]
+
+stress:
+  factors:
+    EQUITY:   {shock: 0.07}
+    GOLD:     {shock: 0.08}
+    COMMOD:   {shock: 0.10}
+    CAD_UP:   {shock: 0.05}
+    CA_YIELD: {shock_bp: 50}
+  loadings:
+    VCN:   {EQUITY: 1}
+    VUN:   {EQUITY: 1, CAD_UP: -1}
+    VIU:   {EQUITY: 1, CAD_UP: -1}
+    VEE:   {EQUITY: 1, CAD_UP: -1}
+    VGV:   {CA_YIELD: {duration: 7.5, convexity: 70}}   # placeholder: replace with factsheet values
+    CGL.C: {GOLD: 1, CAD_UP: -1}
+    PDBC:  {COMMOD: 1, CAD_UP: -1}
+    DLR:   {CAD_UP: -1}
+  single_factor_limit: 0.03
+  joint_scenario: {EQUITY: -0.07, GOLD: -0.08, COMMOD: -0.10, CA_YIELD_bp: 50, CAD_UP: 0.0}
+  joint_limit: 0.05
+  diagnostic_all_adverse_including_fx: true
+
+drawdown:
+  halve_at: -0.10
+  suspend_at: -0.15
+  halve_multiplier: 0.5
+  resume: manual_with_reason
+
+data_quality:
+  max_jump_without_action: 0.15
+  action_reconcile_tol: 0.001
+  cross_source_tol: 0.005
+  fx_max_age_calendar_days: 3
+  rate_max_age_business_days: 5
+
+sources:
+  boc_valet_base: https://www.bankofcanada.ca/valet
+  fx_series: FXUSDCAD
+  cash_rate_series: AVG.INTWO
+
+crypto_comparator:
+  enabled: false
+  universe: [BTC, ETH]
+  quote_currency: CAD
+  bar_close_utc: "00:00"
+  lookback_bars: 365
+  ewma_vol_half_life: 20
+  vol_floor: 0.30
+  budget: {BTC: 0.5, ETH: 0.5}
+  vol_ceiling: 0.08
+  weekly_decision_bar_close_utc: "Saturday 00:00"
+
+research:
+  seed: 20261111
+  bootstrap: {type: stationary, mean_block: 20, resamples: 10000}
+  risk_aversion: 3
+  es_level: 0.975
+  holm_alpha: 0.05
+  early_decision_p: 0.005
+  dsr_min: 0.95
+  dsr_sensitivity_n: [10, 100, 1000, 10000]
+  legacy_trials_estimate: null
+  windows:
+    development_end: 2014-12-31
+    evaluation: [2015-01-01, 2025-12-31]
+    replication: [2026-01-01, 2026-11-11]
+
+promotion:
+  research:
+    min_common_history_years: 5
+    min_oos_annual_blocks: 3
+    require_positive_excess_return_at_2x: true
+    require_positive_cer_at_2x: true
+  operational:
+    min_calendar_days: 90
+    min_sessions: 63
+    min_weekly_decisions: 13
+    reconciliation_pass_rate: 1.0
+    max_stale_input_additions: 0
+    min_job_completion: 0.99
+  live_ramp_fraction: 0.25
