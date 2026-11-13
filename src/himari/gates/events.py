@@ -112,7 +112,7 @@ def apply_event_gate(
         out[sym] = no_additions(w, holdings.get(sym, 0.0)) if sym in pre_event else w
         if out[sym] != w:
             names = ", ".join(f"{e.type} {e.release_utc.isoformat()}" for e in pre_event[sym])
-            details[sym] = f"pre-event ({names}): target {w} capped at {out[sym]}"
+            details[sym] = f"pre-event ({names}): target {w:.6f} capped at {out[sym]:.6f}"
     log = GateLog(
         gate_name="event",
         weights_in=dict(weights_in),

@@ -72,7 +72,7 @@ warn_unused_configs = true
 packages = [
     "himari.core", "himari.risk", "himari.strategy", "himari.execution",
     "himari.data", "himari.accounting", "himari.quality", "himari.gates",
-    "himari.sizing",
+    "himari.sizing", "himari.sim", "himari.research",
 ]
 
 [[tool.mypy.overrides]]

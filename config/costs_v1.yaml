@@ -17,6 +17,21 @@ fx_conversion:
 withholding:
   us_listed_distributions: 0.15   # placeholder: confirm with a Canadian tax advisor
 
+cash_interest:                # amendment v1.6. Placeholders: verify on IBKR's interest-rate page before M6
+  model: ibkr_pro_tiered
+  CAD: {zero_first: 13000, spread_below_benchmark: 0.005, benchmark_proxy: CORRA}
+  USD: {zero_first: 10000, spread_below_benchmark: 0.005, benchmark_proxy: none}  # USD earns 0 in Stage 1
+  full_rate_nav_usd: 100000   # below this, rate x NAV_USD / 100,000
+  accrual: daily              # on settled cash, calendar days / 365 (as the cash index, section 5.6)
+  posting: monthly            # accrued interest is credited at the first session of the next month
+
+settlement_days:              # amendment v1.6: business days after the trade date, for settled cash
+  # T+3 to T+2 for trades from 2017-09-05 (SEC Release 34-80295; CSA, NI 24-101 amendments);
+  # T+2 to T+1 for trades from 2024-05-27 in Canada (CSA) and 2024-05-28 in the US (SEC).
+  # Counted on the fund's exchange calendar; settlement-system holidays are not modelled.
+  TSX:    [{from: 2000-01-01, days: 3}, {from: 2017-09-05, days: 2}, {from: 2024-05-27, days: 1}]
+  NASDAQ: [{from: 2000-01-01, days: 3}, {from: 2017-09-05, days: 2}, {from: 2024-05-28, days: 1}]
+
 stress_spread_multiplier: 5
 
 futures:                      # Stage 2

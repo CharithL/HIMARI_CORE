@@ -10,6 +10,12 @@ def decision_id(decision_date: date, sequence: int = 0) -> str:
     return f"D-{decision_date.isoformat()}-{sequence:03d}"
 
 
+def safety_id(check_date: date, sequence: int = 0) -> str:
+    """Daily safety reductions (§8.3) get their own ids, so their keys never collide with a
+    weekly decision's."""
+    return f"S-{check_date.isoformat()}-{sequence:03d}"
+
+
 def order_idempotency_key(decision_id: str, symbol: str) -> str:
     return f"{decision_id}:{symbol}"
 

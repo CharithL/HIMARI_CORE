@@ -193,6 +193,7 @@ wealth index     W_t     = W_{t-1} * (1 + r_cad_t),   W_0 = 1
 - *(v1.2)* **FX bridging, for the index history only.** A US session whose latest rate is older than 3 days is inside a gap: it gets no CAD return of its own (`FX_BRIDGED`). The first session with a usable rate books the compounded return, `prod(1 + r_loc) * X_new / X_old - 1`, also flagged `FX_BRIDGED`; its `released_at` is the later of that rate's publication and the bar's release *(v1.3)*, so a replay cannot see it early. A bridged multi-day return enters the EWMA as one observation. If the two rates are more than `data_quality.fx_bridge_max_calendar_days` (7) calendar days apart, the gap is a data outage (`FX_OUTAGE`): the instrument is in `DATA_FAULT` and the index has no value after the gap until a person runs `himari data confirm FXUSDCAD <first rate date after the gap>`. Bridging never unlocks a trade: Q7 at decision time is unchanged.
 - The signal index uses **gross** distributions. The account ledger applies withholding tax (§9.4).
 - Test the split-and-distribution-on-the-same-day edge case explicitly.
+- *(v1.6)* **Reinvested distributions.** An action of type `reinvested` is a year-end distribution the fund reinvests and consolidates (common for Canadian ETFs). It pays no cash and moves no price, so it has no total-return effect: `D_t = 0`. Some sources list it as cash, and Q5 cannot catch that when the vendor's adjusted series makes the same error, so Q10 (§6) requires every December split to be confirmed.
 
 ### 5.6 Cash index
 
@@ -214,12 +215,15 @@ Port the validators from `layer-0-data-quality-monitor` (Appendix E). Replace it
 | Q1 | Fresh bar | The latest bar is the instrument's last completed session | `STALE` → fault |
 | Q2 | OHLC sane | `0 < low <= min(open, close) <= max(open, close) <= high`, and volume ≥ 0 | `INVALID` → fault |
 | Q3 | Order | Dates strictly increasing, no duplicates, no future dates | `INVALID` → fault |
-| Q4 | Jump | `abs(close / prev_close - 1) > 0.15` with no corporate action that day | `ANOMALY` → fault until a person runs `himari data confirm` |
+| Q4 | Jump | `abs(close / prev_close - 1) > 0.15` with no corporate action that day (*(v1.6)* a cash distribution or a split; a reinvested distribution never explains a price move) | `ANOMALY` → fault until a person runs `himari data confirm` |
 | Q5 | Actions reconcile | *(v1.1)* On **every** session, our total-return ratio `S_t·(P_t + D_t)/P_{t−1}` agrees with the vendor-adjusted ratio `adj_t/adj_{t−1}` within 0.10% (`data_quality.action_reconcile_tol`). On days without an action this catches distributions and splits missing from our records. A session without an adjusted close cannot be reconciled | `ACTION_MISMATCH` → fault |
 | Q6 | Cross-source | Primary and cross-check closes differ by at most 0.5% on every date both sources have. *(v1.1)* A missing cross-check on the latest (decision) bar is a fault; a missing cross-check on an older date is a warning, counted in the weekly report. A missing cross-check never blocks a cut | `SOURCE_MISMATCH` → fault |
 | Q7 | FX present | `FXUSDCAD` for the date, or the latest rate at most 3 calendar days old (*(v1.1)* flagged `FX_FILLED`). *(v1.2)* In the history, an FX gap longer than 7 calendar days is an outage | `FX_STALE` → fault for PDBC and USD cash valuation. *(v1.2)* `FX_OUTAGE` → fault until confirmed with `himari data confirm` |
 | Q8 | Cash rate present | CORRA at most 5 business days old (*(v1.1)* Bank of Canada business days, §5.4) | `RATE_STALE` → use the last value and set a flag |
 | Q9 | Zero volume | A session with zero volume | Warning only (*(v1.1)* `ZERO_VOLUME`) |
+| Q10 | *(v1.6)* December split | For a CAD-listed fund, every December distribution (cash or reinvested) has its cash/reinvested split confirmed against the issuer's announcement: `himari data confirm SYMBOL EX_DATE --check Q10 --reason "..."`. Every December in the history is confirmed before the baseline (M6) | `ACTION_UNCONFIRMED` → fault until confirmed |
+
+*(v1.6)* Each confirmation names the check it answers (`--check Q4`, `Q7` or `Q10`; FX outages are always Q7) and clears only that check.
 
 **Outcome:** each instrument is either `OK` or `FAULT`. A `FAULT` blocks additions to that instrument; cuts are always allowed. Faults appear on the dashboard and in the weekly report. A data fault never blocks a risk reduction.
 
@@ -350,13 +354,21 @@ Each session after the close, compute `σ_p` for the **current holdings**. If it
 
 Trade instrument `i` only if `abs(w_target_i - w_current_i) > max(0.005, 0.10 * abs(w_current_i))`.
 
-Exceptions that always trade: full exits (target 0 with a nonzero holding), cuts forced by the gates, and daily safety cuts.
+~~Exceptions that always trade: full exits (target 0 with a nonzero holding), cuts forced by the gates, and daily safety cuts.~~ *(v1.6, replaces the line above)* Exceptions that always trade: full exits (target 0 with a nonzero holding), daily safety cuts (§8.3), and the cut on entering HALVED. Cuts by the other gates follow the band like any other target. *Implementation reading, to confirm:* entering HALVED is the first weekly decision whose drawdown state is HALVED after one that was not; the forced cuts are the funds the drawdown gate cut below their holding.
+
+*(v1.6)* **Post-trade limit check.** After the band, the post-trade portfolio is the holdings plus this decision's banded trades. If its `σ_p` or any stress loss (single-factor or joint, §8.5) exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10, i.e. 10% of the limit):
+
+1. shrink this decision's buys pro rata until it fits (*implementation:* the largest fitting scale, searched in steps of 1/1000, since `σ_p` need not fall monotonically as buys shrink);
+2. if it still does not fit with no buys, trade every instrument to its gated target, ignoring the band.
+
+Buys therefore always shrink before any holding is cut beyond the band's plan; a property test checks that, and that the post-trade portfolio never exceeds `σ_p` or a stress limit by more than 10%. *Note:* a holding the band keeps is at most about 11% above its gated target, so the check is a backstop that rarely binds; it binds mostly through small positions inside the absolute band.
 
 ### 9.3 Orders
 
 - **Shares:** `shares_i = trunc(w_i * NAV_CAD / price_CAD_i)`, rounded toward zero. Skip orders under CAD 100 and log them.
+- *(v1.6)* **Reason and gates on every order.** Each order records why it exists, one of `band` (outside the band), `full_exit`, `post_trade_limit` (traded only by the post-trade fallback), `halved` (the cut on entering HALVED) or `safety_cut` (§8.3), plus every gate that cut that fund at the decision with the scale it applied (weight out / weight in). Logs and the trade list show both. *Implementation, to confirm:* a buy the post-trade check shrank keeps its reason (`band`) and lists `post_trade_buys` with the shrink scale among its gates.
 - **PDBC funding:**
-  - Before buying, convert CAD to USD to cover the buy plus a 1% buffer. Tag the conversion `fx_funding`.
+  - Before buying, convert CAD to USD to cover the buy plus a 1% buffer. Tag the conversion `fx_funding`. *Implementation reading, to confirm:* the buy includes its estimated commission (without it a small remainder could never fill).
   - Sales leave the proceeds in USD.
   - Convert surplus USD back to CAD at a weekly decision when it exceeds 2% of NAV.
 - **Backtest:** use the fill model in §10.4.
@@ -368,9 +380,10 @@ Exceptions that always trade: full exits (target 0 with a nonzero holding), cuts
 
 ### 9.4 Ledger
 
-- **Contents:** cash in CAD and USD, positions, trades, commissions, conversions, distributions, withholding, NAV in CAD and the high-water mark.
-- **Distributions:** entitlement is booked on the ex-date and cash on the pay date. US-listed distributions have withholding applied at the configured rate (placeholder 15%; confirm with a Canadian tax advisor).
+- **Contents:** cash in CAD and USD, positions, trades, commissions, conversions, distributions, withholding, NAV in CAD and the high-water mark. *(v1.6)* Also interest and reinvested distributions.
+- **Distributions:** entitlement is booked on the ex-date and cash on the pay date. US-listed distributions have withholding applied at the configured rate (placeholder 15%; confirm with a Canadian tax advisor). *(v1.6)* An entitlement still unpaid 30 days after its ex-date raises an alert. A reinvested distribution (§5.5) is recorded and moves no cash.
 - **Two FX rates:** keep the valuation rate (Bank of Canada) separate from the execution rate (broker). Currency conversions are tagged so they never count as strategy trades.
+- *(v1.6)* **Cash interest** (`costs_v1.yaml` `cash_interest`, placeholders to verify on IBKR's interest-rate page before M6). Interest accrues daily on **settled** cash per currency and is posted monthly (credited at the first session of the next month); the accrued, unposted amount counts in NAV. Per currency: nothing on the first `zero_first` (CAD 13,000; USD 10,000), then `benchmark - spread_below_benchmark` (CORRA - 0.50% for CAD), times `NAV_USD / full_rate_nav_usd` when NAV is below US$100,000. USD has no benchmark proxy and earns 0 in Stage 1. A trade's cash settles after `settlement_days` business days (T+3, then T+2 for trades from 2017-09-05, then T+1 from 2024-05-27 in Canada and 2024-05-28 in the US, per the SEC and CSA notices). *Implementation choices, to confirm:* accrual counts calendar days / 365 at CORRA for the previous session, as the cash index (§5.6); settlement days are counted on the fund's exchange calendar (settlement-system holidays are not modelled); distributions, interest and conversions are settled when credited; a month's interest is posted at the first session of the next month; the simulator plays the broker (it accrues and posts) and the ledger books each posting as reported; the cost multiplier does not scale interest. `account.initial_nav_cad` (placeholder 100,000) is the planned account size and the default starting cash, so it sets the tiers. Excess returns are still measured against the full CORRA cash line (§5.6), and every §12.3 benchmark uses the same cash model.
 
 ### 9.5 Reconciliation
 
@@ -507,12 +520,16 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
 - **97.5% expected shortfall:** the mean of daily losses beyond the 97.5% quantile.
 - **Certainty-equivalent return:** `CER = 252 * mean(r_ex) - (3/2) * 252 * var(r_ex)`, with risk aversion 3.
 - Gate statistics: how often each gate binds, and the average scale it applies.
+- *(v1.6)* Average gross exposure (the mean of `sum(|w_i|)` over the measured sessions).
+- *(v1.6)* **Warm-up excluded.** Metrics start at the later of the window start and the first weekly decision with at least one valid signal (*implementation reading, to confirm:* a fund with a computed trend signal, on or off). Before that the portfolio cannot hold anything, so its all-cash sessions would dilute return, turnover and time in market. Charts shade the warm-up and reports state where measurement starts.
 
 ### 12.3 Benchmarks (always reported)
 
 1. CAD cash (the cash index itself).
 2. **Buy-and-hold of the same eight funds** with the same budgets, caps, ceiling and stress gate, but with every signal on. This separates the value of the trend signal from the value of volatility scaling.
 3. Unscaled timing: equal weights with the trend signal and no volatility scaling.
+
+*(v1.6)* Benchmarks 2 and 3 run through the same ledger, so their idle cash earns interest under the same cash model (§9.4).
 
 ### 12.4 Statistics
 
@@ -664,7 +681,7 @@ IB Gateway must be running and logged in to the paper account. If the user autom
 | M3 | Gates and state machine: ceiling, daily check, events, stress, drawdown, faults, kill | Cut-only property test; stress goldens; persistence tests |
 | M4 | Simulator: clocks, data, `SimBroker`, cost model, ledger, weekly loop, band, reconciliation | No-look-ahead and determinism tests; 1× and 2× runs on fixtures. *(v1.5)* `himari backtest --demo` runs the fixture data, prints a weekly log (signals, gates that bound and why, orders, fills, costs, NAV) and writes a one-page HTML report (NAV vs cash, weights over time, trade list) |
 | M5 | Research engine: metrics, CER, ES, bootstrap, Holm, PSR/DSR/MinTRL, PBO, trial ledger, register loader, reports | Golden tests (Appendix F); reports render |
-| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
+| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks. *(v1.6)* Before real data: every December distribution in the history confirmed (Q10); the event archive holds all nine §8.4 types for 2015–2025; `tests/fixtures/commissions_demo.yaml` replaced by the IBKR schedule; the `cash_interest` placeholders verified on IBKR's interest-rate page | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
 | M7 | **Paper trading and shadow run:** live clock and quotes (IBKR), `QuotePaperBroker`, `IBKRPaperBroker`, dashboard, alerts, scheduler, kill switch | One week of dry runs; then the 90-day shadow run starts, with the operational checklist tracked automatically |
 | M8 | Register tests in order (H1, H2, …) on historical data while the shadow run continues | Each test logged; Holm applied once the family's endpoints are reached |
 | M9 | Crypto comparator (simulation only) | Runs alongside without touching the Stage 1 ledgers; separate report |
@@ -735,7 +752,7 @@ Each of these is excluded from the core:
 | Needed for | Item |
 |---|---|
 | M1 | Choice of end-of-day vendor and its API key, and permission for network access on the user's PC |
-| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports |
+| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports. *(v1.6)* The account size goes in `account.initial_nav_cad` (it sets the interest tiers); the IBKR pricing plan and its commission schedule; the cash/reinvested split of every December distribution, from the issuers' announcements |
 | M7 | IBKR account with a paper login; market-data subscriptions shared with the paper account; IB Gateway or TWS installed |
 | Promotion | Canadian tax advice on account type and withholding; a signed promotion record |
 | DSR | The best available estimate of how many strategies the old Explorer tested (it may be unknown) |
@@ -837,6 +854,7 @@ rebalance:
   min_order_cad: 100
   usd_surplus_convert_above_nav: 0.02
   fx_funding_buffer: 0.01
+  gate_tolerance_rel: 0.10   # amendment v1.6: post-trade sigma_p and stress losses may exceed their limits by 10%
 
 events:
   window: decision_close_to_execution_end
@@ -875,6 +893,7 @@ stress:
 
 account:
   loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
+  initial_nav_cad: 100000 # amendment v1.6: placeholder for the planned account size; sets the interest tiers
 
 drawdown:
   halve_at: -0.10
@@ -961,6 +980,21 @@ fx_conversion:
 
 withholding:
   us_listed_distributions: 0.15   # placeholder: confirm with a Canadian tax advisor
+
+cash_interest:                # amendment v1.6. Placeholders: verify on IBKR's interest-rate page before M6
+  model: ibkr_pro_tiered
+  CAD: {zero_first: 13000, spread_below_benchmark: 0.005, benchmark_proxy: CORRA}
+  USD: {zero_first: 10000, spread_below_benchmark: 0.005, benchmark_proxy: none}  # USD earns 0 in Stage 1
+  full_rate_nav_usd: 100000   # below this, rate x NAV_USD / 100,000
+  accrual: daily              # on settled cash, calendar days / 365 (as the cash index, section 5.6)
+  posting: monthly            # accrued interest is credited at the first session of the next month
+
+settlement_days:              # amendment v1.6: business days after the trade date, for settled cash
+  # T+3 to T+2 for trades from 2017-09-05 (SEC Release 34-80295; CSA, NI 24-101 amendments);
+  # T+2 to T+1 for trades from 2024-05-27 in Canada (CSA) and 2024-05-28 in the US (SEC).
+  # Counted on the fund's exchange calendar; settlement-system holidays are not modelled.
+  TSX:    [{from: 2000-01-01, days: 3}, {from: 2017-09-05, days: 2}, {from: 2024-05-27, days: 1}]
+  NASDAQ: [{from: 2000-01-01, days: 3}, {from: 2017-09-05, days: 2}, {from: 2024-05-28, days: 1}]
 
 stress_spread_multiplier: 5
 
@@ -1109,3 +1143,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 | v1.3 | 11 November 2026 | User | §5.2: legacy noon rate `IEXE0101` for FX history. §5.4: release time for `IEXE0101` (18:30 ET); Bank of Canada business days from the Bank's publication record, with a forward holiday file (federal holidays plus Ontario Family Day and Civic Holiday) for dates not yet published; disagreements listed by `himari data boc-calendar`. §5.5: FX splice at 2016-12-30 / 2017-01-03 with the 2017 overlap logged; a bridged return is released at the later of the rate's publication and the bar's release. No parameter changed. |
 | v1.4 | 12 November 2026 | User | §7.3: `k = 0.08 / sqrt(bᵀ ρ_s b)` over the whole frozen universe, an instrument without 252 sessions included with zero correlation (weight 0, budget in cash); caps and the cash constraint act on the all-on weights `a = k u`, and signals are applied last (`w = a s`), so switching a signal off never raises another weight (rule 6). Appendix F sizing toy case: after caps `[0.25, 0.25, 0.15]`, sum 0.65; after signals `[0.25, 0.25, 0]`; final volatility 0.038324. No parameter changed. |
 | v1.5 | 12 November 2026 | User | §8.6: `resume` resets the drawdown reference to the current NAV (old HWM kept in the record) and is refused below the new `account.loss_floor_cad` (null allowed in backtest and paper, required before live). §8.4: event archive collected from the official sites, times as published, `time_assumed` when only the date is published, missing types named in reports. §8.7: KILL sends no orders, cuts included, and from M7 cancels open broker orders; signed record = hash chain + OS user + UTC time, verified at startup. §16: M4 adds `himari backtest --demo`. Config hash changes. |
+| v1.6 | 13 November 2026 | User | Amends a frozen rule. §9.2: band exceptions are full exits, daily safety cuts and the cut on entering HALVED; other gate cuts follow the band; a post-trade check shrinks this decision's buys pro rata, then trades every fund to its gated target, when `σ_p` or a stress loss exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10). §9.3: every order records its reason and the gates that cut it, with their scales. §9.4: interest on settled cash per `costs_v1.yaml` `cash_interest` (placeholders) and `settlement_days`, posted monthly; `account.initial_nav_cad` (placeholder 100,000) sets the tiers; an alert for a distribution unpaid 30 days after its ex-date. §12.2: the warm-up before the first valid signal is excluded from metrics and shaded on charts; average gross exposure reported. §12.3: benchmarks use the same cash model. §5.5 and §6: action type `reinvested` (`D_t = 0`), check Q10 with `ACTION_UNCONFIRMED`, confirmations name their check. §16 M6 and §20: prerequisites before real data. New keys `rebalance.gate_tolerance_rel` and `account.initial_nav_cad` (frozen config hash `b7563f9b…`), `cash_interest` and `settlement_days` (costs config). Implementation choices marked "to confirm" in §9.2, §9.3, §9.4 and §12.2 are not part of the approval. |

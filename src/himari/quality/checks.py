@@ -302,3 +302,27 @@ def check_zero_volume(symbol: str, bars: Sequence[Bar]) -> list[CheckResult]:
         if b.volume == 0
     ]
     return out or _ok("Q9", symbol)
+
+
+def check_december_split(
+    symbol: str, actions: Sequence[CorporateAction], confirmed: Set[date]
+) -> list[CheckResult]:
+    """Q10 (v1.6), for CAD-listed funds: every December distribution (cash or reinvested) needs
+    its cash/reinvested split confirmed against the issuer's announcement
+    (`himari data confirm SYMBOL DATE --check Q10`). Until then it is a fault: some sources list
+    a reinvested year-end distribution as cash, and Q5 cannot catch it when the vendor's
+    adjusted series makes the same error."""
+    december = sorted(
+        {
+            a.ex_date
+            for a in actions
+            if a.action_type in ("cash", "reinvested") and a.ex_date.month == 12
+        }
+    )
+    detail = "December distribution: cash/reinvested split not confirmed"
+    out = [
+        _result("Q10", symbol, Severity.FAULT, QualityFlag.ACTION_UNCONFIRMED, d, detail)
+        for d in december
+        if d not in confirmed
+    ]
+    return out or _ok("Q10", symbol)

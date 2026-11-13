@@ -60,6 +60,7 @@ rebalance:
   min_order_cad: 100
   usd_surplus_convert_above_nav: 0.02
   fx_funding_buffer: 0.01
+  gate_tolerance_rel: 0.10   # amendment v1.6: post-trade sigma_p and stress losses may exceed their limits by 10%
 
 events:
   window: decision_close_to_execution_end
@@ -98,6 +99,7 @@ stress:
 
 account:
   loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
+  initial_nav_cad: 100000 # amendment v1.6: placeholder for the planned account size; sets the interest tiers
 
 drawdown:
   halve_at: -0.10

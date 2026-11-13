@@ -170,6 +170,7 @@ def data_check(
         boc_days=boc_calendar(store, names, load_boc_holidays(holidays)),
         fx_series=cfg.sources.fx_series,
         confirmed=ConfirmationStore(state_dir / "confirmations.jsonl").confirmed(),
+        confirmed_actions=ConfirmationStore(state_dir / "confirmations.jsonl").confirmed("Q10"),
     )
     report = run_quality_gate(inputs, cfg.data_quality)
     typer.echo(f"Data-quality gate as of {as_of_utc.isoformat()}")
@@ -223,27 +224,160 @@ def data_boc_calendar(
 @data_app.command("confirm")
 def data_confirm(
     symbol: str = typer.Argument(..., help="Instrument, or FXUSDCAD for an FX outage"),
-    day: str = typer.Argument(..., metavar="DATE", help="Session date YYYY-MM-DD"),
-    reason: str = typer.Option(..., help="Why this anomaly or outage is accepted"),
+    day: str = typer.Argument(..., metavar="DATE", help="Session or ex-date YYYY-MM-DD"),
+    reason: str = typer.Option(..., help="Why this anomaly, outage or split is accepted"),
+    check: str = typer.Option(
+        "Q4", help="Q4 price anomaly, Q7 FX outage, Q10 December cash/reinvested split"
+    ),
     state_dir: Path = typer.Option(Path("state"), help="State root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
-    """Record that a person accepted a data anomaly (Q4) or an FX outage (Q7)."""
-    from himari.quality.confirmations import ConfirmationStore
+    """Record that a person checked a data issue: a price anomaly (Q4), an FX outage (Q7), or a
+    December distribution's cash/reinvested split against the issuer's announcement (Q10)."""
+    from himari.core.config import load_config
+    from himari.quality.confirmations import CHECKS, ConfirmationStore
 
+    check = check.upper()
+    if symbol == load_config(config).sources.fx_series:
+        check = "Q7"
+    if check not in CHECKS:
+        raise typer.BadParameter(f"--check must be one of {', '.join(CHECKS)}")
     store = ConfirmationStore(state_dir / "confirmations.jsonl")
-    store.add(symbol, date.fromisoformat(day), reason, _utc_now())
-    typer.echo(f"confirmed {symbol} {day}: {reason}")
+    store.add(symbol, date.fromisoformat(day), reason, _utc_now(), check)
+    typer.echo(f"confirmed {symbol} {day} ({check}): {reason}")
+
+
+_COSTS = {"1x": (1.0,), "2x": (2.0,), "both": (1.0, 2.0)}
 
 
 @app.command()
 def backtest(
+    demo: bool = typer.Option(False, "--demo", help="Run the committed synthetic fixture data"),
+    costs: str = typer.Option("both", help="Cost multiplier: 1x, 2x or both"),
+    from_date: str = typer.Option(None, "--from", help="Start date (default 2015-01-01)"),
+    to_date: str = typer.Option(None, "--to", help="End date (default 2025-12-31)"),
+    initial_cad: str = typer.Option(
+        None, help="Starting cash in CAD (default: account.initial_nav_cad in the config)"
+    ),
+    commissions: Path = typer.Option(
+        None, help="Broker commission schedule YAML (required unless --demo)"
+    ),
+    primary: str = typer.Option("csv", help="Primary source name"),
+    crosscheck: str = typer.Option(None, help="Cross-check source name"),
+    fill_at: str = typer.Option("close", help="close, or open for the sensitivity variant"),
+    label: str = typer.Option("adhoc", help="Trial ledger hypothesis id: adhoc or baseline"),
+    notes: str = typer.Option("", help="Trial ledger notes"),
+    holidays: Path = typer.Option(_DEFAULT_HOLIDAYS, help="Forward Bank of Canada holiday file"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root"),
+    state_dir: Path = typer.Option(Path("state"), help="State root (runs/, trials.sqlite)"),
     config: Path = typer.Option(_default_config_path(), help="Config file"),
-    costs: str = typer.Option("2x", help="Cost multiplier: 1x or 2x"),
-    from_date: str = typer.Option("2015-01-01", "--from", help="Start date"),
-    to_date: str = typer.Option("2025-12-31", "--to", help="End date"),
+    quiet: bool = typer.Option(False, help="Do not print the weekly log"),
 ) -> None:
-    """Run a historical backtest."""
-    typer.echo(f"[M4] backtest {from_date} to {to_date} at {costs} costs (not yet implemented)")
+    """Run a historical backtest; print the weekly log and write an HTML report."""
+    import tempfile
+    from decimal import Decimal, InvalidOperation
+
+    from himari.core.config import load_config, run_hashes
+    from himari.core.ids import run_id
+    from himari.data.calendars import load_boc_holidays
+    from himari.data.storage import VersionedStore
+    from himari.quality.confirmations import ConfirmationStore
+    from himari.research.trials import TrialLedger
+    from himari.sim import run as runner
+    from himari.sim.report import summarize, weekly_log
+
+    def positive_cad(value: str) -> Decimal:
+        try:
+            amount = Decimal(value)
+        except InvalidOperation:
+            amount = Decimal(0)
+        if not amount.is_finite() or amount <= 0:
+            raise typer.BadParameter("--initial-cad must be a positive amount")
+        return amount
+
+    if costs not in _COSTS:
+        raise typer.BadParameter("--costs must be 1x, 2x or both")
+    cfg = load_config(config)
+    root = Path.cwd()
+    rid = run_id()
+    out_dir = state_dir / "runs" / rid
+    try:
+        cash = runner.initial_nav(cfg, positive_cad(initial_cad) if initial_cad else None)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if demo:
+        start = _parse_date(from_date, runner.DEMO_START)
+        end = _parse_date(to_date, runner.DEMO_END)
+        schedule = commissions or root / "tests" / "fixtures" / "commissions_demo.yaml"
+        primary, crosscheck = "csv", crosscheck or "xcheck"  # the fixture set's two sources
+    else:
+        if commissions is None:
+            typer.echo(
+                "A real run needs --commissions: the broker's current schedule (costs_v1.yaml "
+                "says never assume zero)."
+            )
+            raise typer.Exit(2)
+        start = _parse_date(from_date, date(2015, 1, 1))
+        end = _parse_date(to_date, date(2025, 12, 31))
+        schedule = commissions
+    plan = runner.RunPlan(start, end, cash, _COSTS[costs], schedule, primary, crosscheck, fill_at)
+    with tempfile.TemporaryDirectory() as tmp:
+        if demo:
+            store = runner.ingest_demo_fixtures(cfg, root, Path(tmp) / "clean")
+            forward, confirmations = None, runner.demo_confirmations(root)
+            data_label = "SYNTHETIC fixture data (not market data)"
+        else:
+            store = VersionedStore(data_dir / "clean")
+            forward = load_boc_holidays(holidays)
+            confirmations = ConfirmationStore(state_dir / "confirmations.jsonl")
+            data_label = f"stored data, source {primary}"
+        results = runner.run_backtests(cfg, root, store, plan, out_dir, forward, confirmations)
+        version = ("fixtures:" if demo else f"{primary}:") + runner.data_version(store)
+    commission_label = schedule.name + (" (SYNTHETIC)" if demo and commissions is None else "")
+    notices = (
+        [
+            "Synthetic fixture data and a synthetic commission schedule: the numbers show how "
+            "the system works, not how the strategy performs."
+        ]
+        if demo
+        else []
+    )
+    report = runner.write_outputs(
+        results,
+        out_dir,
+        "HIMARI backtest" + (" (demo)" if demo else ""),
+        data_label,
+        commission_label,
+        notices,
+    )
+    if not quiet:
+        for line in weekly_log(results[0]):
+            typer.echo(line)
+    hashes = run_hashes(root)
+    note = notes or ("demo on synthetic fixture data" if demo else "")
+    note += f" | costs {hashes['costs'][:12]} | commissions {schedule.name} | run {rid}"
+    ids = runner.log_trials(
+        TrialLedger(state_dir / "trials.sqlite"),
+        results,
+        root,
+        hashes,
+        version,
+        label,
+        note,
+        _utc_now(),
+    )
+    typer.echo("")
+    for r, tid in zip(results, ids, strict=True):
+        s = summarize(r)
+        typer.echo(
+            f"{s.cost_multiplier:g}x costs: NAV {s.final_nav:,.2f} CAD, return "
+            f"{s.total_return:+.2%} (cash {s.cash_return:+.2%}), max drawdown "
+            f"{s.max_drawdown:.2%}, costs {s.costs_cad:,.2f} CAD, trades {s.trades} [{tid}]"
+        )
+        for a in r.alerts:
+            typer.echo(f"  ALERT {a}")
+    typer.echo(f"Report: {report}")
+    typer.echo(f"Run files: {out_dir}")
 
 
 @register_app.command("run")

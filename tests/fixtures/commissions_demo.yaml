@@ -1,0 +1,8 @@
+# SYNTHETIC commission schedule, for `himari backtest --demo` and tests only.
+# It is NOT a broker's schedule. costs_v1.yaml requires the broker's current schedule for
+# real runs (never assume zero); a real run refuses to start without one.
+# A flat 5.00 per order in the trading currency: per_share 0, minimum 5, capped at the trade value.
+name: synthetic_flat_5
+commissions:
+  CAD: {per_share: 0.0, minimum: 5.00, max_fraction: 1.0}
+  USD: {per_share: 0.0, minimum: 5.00, max_fraction: 1.0}

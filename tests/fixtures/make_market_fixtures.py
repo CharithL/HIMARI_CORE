@@ -1,8 +1,9 @@
 """Generate the committed market fixtures under tests/fixtures/market/.
 
-SYNTHETIC DATA: prices, distributions, the split, FX, CORRA and the Bank of Canada
-holiday calendar are invented for tests. They are not market data and not the Bank's
-real holiday list. Regenerate with:
+SYNTHETIC DATA: prices, distributions and their pay dates, the reinvested year-end
+distributions, the split, FX, CORRA, the Bank of Canada holiday calendar and the Q10
+confirmations are invented for tests. They are not market data and not the Bank's real
+holiday list. Regenerate with:
 
     python tests/fixtures/make_market_fixtures.py
 """
@@ -10,6 +11,7 @@ real holiday list. Regenerate with:
 from __future__ import annotations
 
 import csv
+import json
 import math
 import sys
 from datetime import date, timedelta
@@ -38,6 +40,11 @@ UNIVERSE: dict[str, tuple[str, float, float, float, str | None, float]] = {
 }
 SPLITS = {("VIU", date(2025, 6, 16)): 2.0}
 ZERO_VOLUME = {("VGV", date(2025, 8, 14))}
+# v1.6: year-end distributions the fund reinvests and consolidates (no cash, no price effect),
+# on the last session of December; amounts per unit
+REINVESTED = {("VCN", 2024): 0.0450, ("VCN", 2025): 0.0480}
+PAY_LAG_SESSIONS = 5  # synthetic: a cash distribution is paid 5 sessions after its ex-date
+CONFIRMED_AT = "2026-01-05T00:00:00+00:00"
 
 # Synthetic Bank of Canada closures: the synthetic FX/CORRA publication record skips these
 # weekdays (chosen to exercise Easter bridges, Remembrance Day, etc.)
@@ -111,8 +118,14 @@ def _boc_days() -> list[date]:
     return out
 
 
+def _pay_date(calendar: str, ex_date: date) -> date:
+    later = sessions(calendar, ex_date + timedelta(days=1), ex_date + timedelta(days=30))
+    return later[PAY_LAG_SESSIONS - 1]
+
+
 def main() -> None:
     rng = np.random.default_rng(SEED)
+    december: list[tuple[str, str]] = []  # (symbol, ex_date) of CAD-listed December payouts
     for sym, (cal, p0, vol, drift, schedule, yld) in UNIVERSE.items():
         days = sessions(cal, START, END)
         ex = _ex_dates(days, schedule)
@@ -148,8 +161,9 @@ def main() -> None:
                 )
             ],
         )
+        currency = "USD" if cal == "XNAS" else "CAD"
         actions = [
-            [d.isoformat(), "", "cash", f"{x:.4f}", "USD" if cal == "XNAS" else "CAD"]
+            [d.isoformat(), _pay_date(cal, d).isoformat(), "cash", f"{x:.4f}", currency]
             for d, x in zip(days, cash, strict=True)
             if x > 0
         ]
@@ -158,11 +172,19 @@ def main() -> None:
             for d, s in zip(days, splits, strict=True)
             if s != 1.0
         ]
+        for (rsym, year), amount in REINVESTED.items():
+            if rsym == sym:
+                last = max(d for d in days if d.year == year and d.month == 12)
+                actions.append([last.isoformat(), "", "reinvested", f"{amount:.4f}", currency])
         _write(
             ROOT / "primary" / "actions" / f"{sym}.csv",
             ["ex_date", "pay_date", "type", "amount", "currency"],
             sorted(actions),
         )
+        if currency == "CAD":
+            december.extend(
+                (sym, row[0]) for row in actions if row[2] != "split" and row[0][5:7] == "12"
+            )
         xrows = []
         for d, o, h, lo, c, v in zip(days, opens, highs, lows, closes, vols, strict=True):
             xc = round(c * (1.0 + rng.uniform(-0.0015, 0.0015)), 2)
@@ -190,6 +212,20 @@ def main() -> None:
         )
         corra.append([d.isoformat(), f"{base + rng.normal(0.0, 0.01):.2f}"])
     _write(ROOT / "primary" / "series" / "AVG.INTWO.csv", ["date", "value"], corra)
+
+    # Q10 (v1.6): the December cash/reinvested splits, "confirmed" for the synthetic set
+    records = [
+        {
+            "check": "Q10",
+            "confirmed_at_utc": CONFIRMED_AT,
+            "reason": "synthetic fixture: split as stored",
+            "session_date": ex,
+            "symbol": sym,
+        }
+        for sym, ex in sorted(set(december))
+    ]
+    with open(ROOT / "confirmations.jsonl", "w", newline="", encoding="utf-8") as f:
+        f.writelines(json.dumps(r, sort_keys=True) + "\n" for r in records)
 
 
 if __name__ == "__main__":

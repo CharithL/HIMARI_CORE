@@ -24,6 +24,7 @@ from himari.quality.checks import (
     check_actions_reconcile,
     check_cash_rate,
     check_cross_source,
+    check_december_split,
     check_fresh,
     check_fx,
     check_fx_bridges,
@@ -69,7 +70,8 @@ class QualityInputs:
     as_of_date: date
     boc_days: BocBusinessDays
     fx_series: str  # FX outage confirmations are keyed by this name
-    confirmed: Mapping[str, Set[date]] = field(default_factory=dict)
+    confirmed: Mapping[str, Set[date]] = field(default_factory=dict)  # Q4 anomalies, Q7 outages
+    confirmed_actions: Mapping[str, Set[date]] = field(default_factory=dict)  # Q10 (v1.6)
 
 
 def run_quality_gate(inp: QualityInputs, cfg: DataQualityConfig) -> QualityReport:
@@ -94,6 +96,8 @@ def run_quality_gate(inp: QualityInputs, cfg: DataQualityConfig) -> QualityRepor
             *check_zero_volume(sym, bars),
             *(r.model_copy(update={"symbol": sym}) for r in rate),
         ]
+        if inst.currency == Currency.CAD:
+            results += check_december_split(sym, actions, inp.confirmed_actions.get(sym, set()))
         if inst.currency == Currency.USD:
             results += check_fx(sym, inp.fx, inp.last_sessions[sym], cfg.fx_max_age_calendar_days)
             results += check_fx_bridges(
@@ -127,7 +131,7 @@ def apply_data_gate(
             continue
         out[sym] = no_additions(w, holdings.get(sym, 0.0))
         if out[sym] != w:
-            details[sym] = f"data fault: target {w} capped at {out[sym]}"
+            details[sym] = f"data fault: target {w:.6f} capped at {out[sym]:.6f}"
     check_cut_only("data", weights_in, out)
     log = GateLog(
         gate_name="data",

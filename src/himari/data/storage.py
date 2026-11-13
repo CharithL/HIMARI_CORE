@@ -149,76 +149,93 @@ class VersionedStore:
         df = self.load(spec)
         if as_of_utc is not None and not df.empty:
             df = df[df["released_at_utc"] <= pd.Timestamp(as_of_utc)]
-        df = df.sort_values([*spec.key, "version"], kind="mergesort")
-        df = df.drop_duplicates(subset=list(spec.key), keep="last")
-        return df.reset_index(drop=True)
+        return latest_versions(df, spec)
 
     def bars(self, source: str, as_of_utc: datetime | None = None) -> dict[str, list[Bar]]:
-        df = self.view(BARS, as_of_utc)
-        out: dict[str, list[Bar]] = {}
-        for rec in df[df["source"] == source].to_dict("records"):
-            adj = rec["adj_close"]
-            out.setdefault(rec["symbol"], []).append(
-                Bar(
-                    symbol=rec["symbol"],
-                    session_date=rec["session_date"],
-                    open=rec["open"],
-                    high=rec["high"],
-                    low=rec["low"],
-                    close=rec["close"],
-                    volume=int(rec["volume"]),
-                    source=rec["source"],
-                    adj_close=None if adj is None or math.isnan(adj) else float(adj),
-                    version=int(rec["version"]),
-                    observed_at_utc=rec["observed_at_utc"].to_pydatetime(),
-                    released_at_utc=rec["released_at_utc"].to_pydatetime(),
-                )
-            )
-        return out
+        return frame_bars(self.view(BARS, as_of_utc), source)
 
     def actions(
         self, source: str, as_of_utc: datetime | None = None
     ) -> dict[str, list[CorporateAction]]:
-        df = self.view(ACTIONS, as_of_utc)
-        out: dict[str, list[CorporateAction]] = {}
-        for rec in df[df["source"] == source].to_dict("records"):
-            out.setdefault(rec["symbol"], []).append(
-                CorporateAction.model_validate(
-                    {
-                        "symbol": rec["symbol"],
-                        "ex_date": rec["ex_date"],
-                        "pay_date": rec["pay_date"],
-                        "action_type": rec["action_type"],
-                        "amount": Decimal(rec["amount"]),
-                        "currency": rec["currency"],
-                        "source": rec["source"],
-                        "version": int(rec["version"]),
-                        "observed_at_utc": rec["observed_at_utc"].to_pydatetime(),
-                        "released_at_utc": rec["released_at_utc"].to_pydatetime(),
-                    }
-                )
-            )
-        return out
+        return frame_actions(self.view(ACTIONS, as_of_utc), source)
 
     def series(
         self, series: str, as_of_utc: datetime | None = None, source: str | None = None
     ) -> list[SeriesObservation]:
-        df = self.view(SERIES, as_of_utc)
-        df = df[df["series"] == series]
-        if source is not None:
-            df = df[df["source"] == source]
-        return [
-            SeriesObservation(
-                series=rec["series"],
-                obs_date=rec["obs_date"],
-                value=rec["value"],
+        return frame_series(self.view(SERIES, as_of_utc), series, source)
+
+
+def latest_versions(df: pd.DataFrame, spec: TableSpec) -> pd.DataFrame:
+    """The highest version of each key among the given rows."""
+    df = df.sort_values([*spec.key, "version"], kind="mergesort")
+    df = df.drop_duplicates(subset=list(spec.key), keep="last")
+    return df.reset_index(drop=True)
+
+
+def frame_bars(df: pd.DataFrame, source: str) -> dict[str, list[Bar]]:
+    """Bars of one source from a table view, by symbol in key (date) order."""
+    out: dict[str, list[Bar]] = {}
+    for rec in df[df["source"] == source].to_dict("records"):
+        adj = rec["adj_close"]
+        out.setdefault(rec["symbol"], []).append(
+            Bar(
+                symbol=rec["symbol"],
+                session_date=rec["session_date"],
+                open=rec["open"],
+                high=rec["high"],
+                low=rec["low"],
+                close=rec["close"],
+                volume=int(rec["volume"]),
                 source=rec["source"],
+                adj_close=None if adj is None or math.isnan(adj) else float(adj),
                 version=int(rec["version"]),
                 observed_at_utc=rec["observed_at_utc"].to_pydatetime(),
                 released_at_utc=rec["released_at_utc"].to_pydatetime(),
             )
-            for rec in df.sort_values("obs_date", kind="mergesort").to_dict("records")
-        ]
+        )
+    return out
+
+
+def frame_actions(df: pd.DataFrame, source: str) -> dict[str, list[CorporateAction]]:
+    out: dict[str, list[CorporateAction]] = {}
+    for rec in df[df["source"] == source].to_dict("records"):
+        out.setdefault(rec["symbol"], []).append(
+            CorporateAction.model_validate(
+                {
+                    "symbol": rec["symbol"],
+                    "ex_date": rec["ex_date"],
+                    "pay_date": rec["pay_date"],
+                    "action_type": rec["action_type"],
+                    "amount": Decimal(rec["amount"]),
+                    "currency": rec["currency"],
+                    "source": rec["source"],
+                    "version": int(rec["version"]),
+                    "observed_at_utc": rec["observed_at_utc"].to_pydatetime(),
+                    "released_at_utc": rec["released_at_utc"].to_pydatetime(),
+                }
+            )
+        )
+    return out
+
+
+def frame_series(
+    df: pd.DataFrame, series: str, source: str | None = None
+) -> list[SeriesObservation]:
+    df = df[df["series"] == series]
+    if source is not None:
+        df = df[df["source"] == source]
+    return [
+        SeriesObservation(
+            series=rec["series"],
+            obs_date=rec["obs_date"],
+            value=rec["value"],
+            source=rec["source"],
+            version=int(rec["version"]),
+            observed_at_utc=rec["observed_at_utc"].to_pydatetime(),
+            released_at_utc=rec["released_at_utc"].to_pydatetime(),
+        )
+        for rec in df.sort_values("obs_date", kind="mergesort").to_dict("records")
+    ]
 
 
 def bar_row(bar: Bar, released_at_utc: datetime) -> dict[str, Any]:

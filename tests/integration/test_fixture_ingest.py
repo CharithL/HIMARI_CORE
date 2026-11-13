@@ -21,10 +21,12 @@ from himari.data.ingest import (
 from himari.data.sources import CsvSource
 from himari.data.storage import ACTIONS, BARS, SERIES, VersionedStore
 from himari.quality.checks import Severity
+from himari.quality.confirmations import ConfirmationStore
 from himari.quality.gate import QualityInputs, apply_data_gate, run_quality_gate
 
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "market"
+FIXTURE_CONFIRMATIONS = ConfirmationStore(FIXTURES / "confirmations.jsonl")
 CFG = load_config(ROOT / "config" / "frozen_v1.yaml")
 UTC = timezone.utc
 START, END = date(2024, 1, 1), date(2025, 12, 31)
@@ -34,7 +36,9 @@ SYMBOLS = [i.symbol for i in CFG.stage1.instruments()]
 NAMES = SeriesNames(CFG.sources.fx_series, CFG.sources.cash_rate_series)
 
 # sha256 of the canonical CSV of every stored row (all versions). Update only on purpose.
-GOLDEN_CONTENT_HASH = "225ed5747c1f00dd588ddd67d31492bc158b71cd9a3bc9d7a8d90aa17f785fe2"
+# Re-pinned for amendment v1.6: the fixture distributions gained pay dates and VCN gained
+# reinvested year-end distributions (prices, FX and CORRA are byte-identical).
+GOLDEN_CONTENT_HASH = "36b1122fb99cc4a065c192800acf79e33d41bef9e894fef7a9ebc3c557833b3b"
 
 
 def ingest_fixtures(root: Path) -> VersionedStore:
@@ -138,6 +142,7 @@ def gate_inputs(store: VersionedStore, day: date, **overrides: object) -> Qualit
         "as_of_date": day,
         "boc_days": boc_calendar(store, NAMES, None),
         "fx_series": "FXUSDCAD",
+        "confirmed_actions": FIXTURE_CONFIRMATIONS.confirmed("Q10"),  # v1.6: Q10 needs them
     }
     fields.update(overrides)
     return QualityInputs(**fields)  # type: ignore[arg-type]
@@ -160,6 +165,22 @@ class TestGateOnFixtures:
         assert out == {"PDBC": 0.10, "VCN": 0.05}  # no addition to PDBC; VCN untouched
         cut, _ = apply_data_gate({"PDBC": 0.02}, {"PDBC": 0.10}, report)
         assert cut == {"PDBC": 0.02}  # the fault never blocks a cut
+
+    def test_unconfirmed_december_splits_fault_cad_funds(self, store: VersionedStore) -> None:
+        """Q10 (v1.6): without confirmations every CAD-listed fund with a December
+        distribution faults; PDBC (USD-listed) and the funds without payouts do not."""
+        day = date(2025, 12, 31)
+        report = run_quality_gate(gate_inputs(store, day, confirmed_actions={}), CFG.data_quality)
+        faulted = {s for s, q in report.instruments.items() if q.status == "FAULT"}
+        assert faulted == {"VCN", "VUN", "VIU", "VEE", "VGV"}
+        vcn = [r for r in report.instruments["VCN"].faults if r.check == "Q10"]
+        assert [r.session_date for r in vcn] == [
+            date(2024, 12, 27),
+            date(2024, 12, 31),  # the reinvested distribution needs its split confirmed too
+            date(2025, 12, 29),
+            date(2025, 12, 31),
+        ]
+        assert {r.flag for r in vcn} == {QualityFlag.ACTION_UNCONFIRMED}
 
     def test_no_cash_rate_faults_every_instrument(self, store: VersionedStore) -> None:
         report = run_quality_gate(

@@ -55,6 +55,15 @@ def next_session(code: str, day: date) -> date:
     return nxt
 
 
+def previous_session(code: str, day: date) -> date:
+    """Last session strictly before day."""
+    cal = get_calendar(code)
+    prev: date = cal.date_to_session(
+        pd.Timestamp(day - timedelta(days=1)), direction="previous"
+    ).date()
+    return prev
+
+
 def weekly_decision_sessions(code: str, start: date, end: date) -> list[date]:
     """Last session of each ISO week: normally Friday, Thursday if Friday is a holiday."""
     week_end = end + timedelta(days=6 - end.weekday())

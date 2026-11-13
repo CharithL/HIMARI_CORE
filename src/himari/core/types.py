@@ -50,6 +50,7 @@ class QualityFlag(str, enum.Enum):
     FX_OUTAGE = "FX_OUTAGE"  # FX gap longer than the bridge cap: fault until confirmed (v1.2)
     RATE_STALE = "RATE_STALE"
     ZERO_VOLUME = "ZERO_VOLUME"
+    ACTION_UNCONFIRMED = "ACTION_UNCONFIRMED"  # December split not confirmed (Q10, v1.6)
 
 
 class SafetyState(str, enum.Enum):
@@ -93,8 +94,10 @@ class CorporateAction(BaseModel):
     symbol: str
     ex_date: date
     pay_date: date | None = None
-    action_type: Literal["cash", "split"]
-    amount: Decimal  # cash per post-split share, or split ratio (2.0 = two-for-one)
+    # reinvested (v1.6): a year-end distribution the fund reinvests and consolidates; no cash,
+    # no price drop, no total-return effect (D_t = 0)
+    action_type: Literal["cash", "split", "reinvested"]
+    amount: Decimal  # per post-split share (cash or reinvested), or split ratio (2.0 = 2-for-1)
     currency: Currency | None = None
     source: str = ""
     version: int = 1

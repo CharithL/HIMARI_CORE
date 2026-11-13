@@ -4,6 +4,83 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.6 — band and post-trade limits, order reasons, cash interest, warm-up, reinvested and Q10 (2026-11-13, approved by the user)
+- §9.2 (amends a frozen rule): the band's exceptions are full exits, daily safety cuts and the
+  cut on entering HALVED; other gate cuts follow the band. After the band, if the post-trade
+  `σ_p` or a stress loss exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10),
+  this decision's buys shrink pro rata until it fits; if it still does not fit with no buys,
+  every fund trades to its gated target (`execution/post_trade.py`). Property test: never more
+  than 10% over a limit, and buys shrink before any holding is cut. On the fixtures, the
+  2025-01-24 decision (VUN switching on, stress gate x0.949) now trades VUN only.
+- §9.3: every order records its reason (`band`, `full_exit`, `post_trade_limit`, `halved`,
+  `safety_cut`) and the gates that cut its fund with their scales; the trade list and logs show
+  them.
+- §9.4: interest on settled cash (`costs_v1.yaml` `cash_interest`, placeholders to verify on
+  IBKR's interest-rate page before M6; `settlement_days`: T+3, T+2 from 2017-09-05, T+1 from
+  2024-05-27 in Canada and 2024-05-28 in the US, from the SEC and CSA notices), accrued daily,
+  posted monthly, accruals in NAV. `account.initial_nav_cad: 100000` (placeholder) is the default
+  starting cash and sets the tiers. Alert when a distribution is unpaid 30 days after its ex-date.
+- §12.2: metrics start at the first weekly decision with a valid signal; charts shade the
+  warm-up; average gross exposure reported. §12.3: benchmarks use the same cash model.
+- §5.5, §6: action type `reinvested` (no cash, `D_t = 0`, never explains a Q4 jump); check Q10
+  (`ACTION_UNCONFIRMED`) for unconfirmed December splits on CAD-listed funds; confirmations name
+  their check (`himari data confirm ... --check Q4|Q7|Q10`).
+- Fixtures: the synthetic distributions gained pay dates (5 sessions after the ex-date), VCN
+  gained reinvested year-end distributions, and `confirmations.jsonl` holds their Q10
+  confirmations. Prices, FX and CORRA are byte-identical; the stage-1 golden weights are
+  unchanged; the ingest content hash is re-pinned (`225ed574…` to `36b1122f…`).
+- Config hash changes from `ca1b6e98…` to `b7563f9b…`; the costs config gains two blocks.
+- Implementation choices, not yet approved (marked "to confirm" in the guide): entering HALVED
+  is the first weekly decision in HALVED after one that was not; a shrunk buy keeps reason
+  `band` and lists `post_trade_buys` among its gates; USD funding covers the buy's estimated
+  commission; interest accrues at CORRA for the previous session over calendar days / 365, a
+  month is posted at the next month's first session, settlement days count on the exchange
+  calendar, distributions, interest and conversions settle when credited, the simulator accrues
+  and the ledger books its postings, and the cost multiplier does not scale interest; a "valid
+  signal" is a fund with a computed trend signal (on or off).
+
+### M4 — Simulator (2026-11-13)
+- `sim/market.py`: `PointInTimeData`, the strategy's as-of view (rule 2). Rows are visible from
+  their release time; corrections and late rows start epochs, and indices are rebuilt per epoch
+  and cut at the decision date (prefix-stable), so a backtest is exact without re-reading the
+  store each session. `MarketTruth`, the simulator's market (final data), for fills only.
+- `sim/broker.py`: `SimBroker` (§10.4): next-session close (or open, sensitivity variant) moved
+  by the cost model, stress spreads in event windows, participation cap with 3 carried sessions,
+  halts, whole shares, no shorts or borrowing, idempotency keys, USD funding, splits,
+  distributions with withholding, interest.
+- `execution/`: cost model (§11; the commission schedule must be given explicitly), the band,
+  the order builder (whole shares toward zero, CAD 100 minimum), the post-trade check,
+  reconciliation (0 shares, CAD 1).
+- `accounting/ledger.py` (§9.4) and `accounting/interest.py`; `research/trials.py`, the
+  append-only trial ledger (§12.6), so every run is logged (rule 6).
+- `sim/engine.py`: the §10.3 loop over XTSE and XNAS sessions running the §9.1 weekly cycle,
+  the daily safety check, the drawdown state, reconciliation with VENUE_FAULT on a mismatch,
+  KILL. `sim/report.py`: the run log (JSON lines, the determinism golden), NAV and trade CSVs,
+  the weekly log and a one-page HTML report (assets in `sim/assets/`).
+- Gate log details print weights to 6 decimals (they were full floats inside strings, which the
+  run log's rounding could not reach). USD funding covers the buy's commission (without it a
+  one-share PDBC remainder could never fill).
+- `himari backtest`: `--demo` runs the synthetic fixtures at 1x and 2x with a SYNTHETIC
+  commission schedule (`tests/fixtures/commissions_demo.yaml`); a real run refuses to start
+  without `--commissions`. Outputs under `state/runs/<run>/`, trials in `state/trials.sqlite`.
+- Demo (synthetic data; metrics from 2025-01-03, 258 warm-up sessions): 1x NAV 107,956.63,
+  +5.72% vs cash +2.89%, 51 trades; 2x NAV 107,469.11, +5.25%, 51 trades.
+- Tests: costs, band, orders, post-trade (unit and property), interest and settlement, ledger,
+  broker (capacity cap partial fill, duplicate order refused, holiday divergence), trial ledger,
+  CLI, and on the fixtures: 1x/2x, byte-identical reruns, a pinned run-log golden, no
+  look-ahead (future prices +50%, FX +10%), KILL, a reconciliation mismatch, an unpaid
+  distribution, point-in-time epochs. `sim` and `research` join strict mypy.
+
+### Event archive 2015–2025 (2026-11-13)
+- `config/events/events_2015..2025.yaml` hold all nine §8.4 types, 927 scheduled releases:
+  FOMC 87, BOC 88, ECB 88, SNB 44, BOJ 94, US_CPI 131, US_NFP 131, CA_CPI 132, CA_LFS 132. No
+  type is missing in any year. 2025 has 11 US CPI and 11 jobs releases (the September reports
+  moved to 24 October and 20 November, with no separate October release).
+- Times as published; `time_assumed` (498 entries) where only the date is published: ECB 13:45
+  CET (14:15 from 2022-07-21), SNB 09:30, BoJ 12:00 JST, StatCan 08:30 ET, FOMC 2015.
+  Unscheduled decisions are left out (they could not be known at the decision close).
+- Collectors in `scripts/events/` (polite: robots.txt, crawl delay, cache, backoff on resets).
+
 ### Amendment v1.5 — resume, loss floor, events, kill switch, M4 demo (2026-11-12, approved by the user)
 - §8.6: `himari resume` resets the drawdown reference to the current NAV; the old HWM and
   drawdown stay in the record. It no longer waits for a recovery (that could deadlock a

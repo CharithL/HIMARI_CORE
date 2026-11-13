@@ -34,7 +34,8 @@ def session_adjustments(
 
     An action applies to the first session on or after its ex-date, so a missing ex-date bar
     still adjusts the return that spans it. Actions at or before the first session, or after
-    the last, fall outside the return series.
+    the last, fall outside the return series. A reinvested distribution (v1.6) pays no cash
+    and moves no price, so it adds nothing (D_t = 0).
     """
     split = np.ones(len(dates))
     cash = np.zeros(len(dates))
@@ -44,13 +45,18 @@ def session_adjustments(
             continue
         if a.action_type == "split":
             split[i] *= float(a.amount)
-        else:
+        elif a.action_type == "cash":
             cash[i] += float(a.amount)
     return split, cash
 
 
 def action_sessions(dates: Sequence[date], actions: Sequence[CorporateAction]) -> set[date]:
-    return {dates[i] for a in actions if (i := _action_index(dates, a)) is not None}
+    """Sessions whose price move an action explains (cash or split; never reinvested)."""
+    return {
+        dates[i]
+        for a in actions
+        if a.action_type in ("cash", "split") and (i := _action_index(dates, a)) is not None
+    }
 
 
 @dataclass(frozen=True)

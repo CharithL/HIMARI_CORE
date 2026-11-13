@@ -11,7 +11,7 @@ setup:
 lint:
 	ruff check src/ tests/
 	ruff format --check src/ tests/
-	mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution src/himari/data src/himari/accounting src/himari/quality src/himari/gates src/himari/sizing
+	mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution src/himari/data src/himari/accounting src/himari/quality src/himari/gates src/himari/sizing src/himari/sim src/himari/research
 
 test:
 	pytest tests/ -x --cov=himari --cov-report=term-missing

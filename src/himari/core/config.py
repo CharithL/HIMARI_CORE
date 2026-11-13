@@ -109,6 +109,7 @@ class RebalanceConfig(BaseModel):
     min_order_cad: float = 100
     usd_surplus_convert_above_nav: float = 0.02
     fx_funding_buffer: float = 0.01
+    gate_tolerance_rel: float = 0.10  # v1.6: post-trade sigma_p and stress may exceed by this
 
 
 class EventsConfig(BaseModel):
@@ -138,6 +139,7 @@ class StressConfig(BaseModel):
 
 class AccountConfig(BaseModel):
     loss_floor_cad: float | None = None  # null allowed in backtest and paper; required live
+    initial_nav_cad: float | None = None  # v1.6: planned account size; sets the interest tiers
 
 
 class DrawdownConfig(BaseModel):
