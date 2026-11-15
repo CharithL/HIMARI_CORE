@@ -4,6 +4,33 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### M5 (part 1) — research statistics and return metrics (2026-11-15)
+- `research/stats.py` (§12.4): the paired stationary bootstrap (Politis-Romano; mean block 20,
+  10,000 resamples, seed 20261111, drawn in fixed chunks of 250 so a p-value is reproducible;
+  10,000 resamples over 11 years of sessions take about a second), Holm, PSR, DSR with SR0*,
+  MinTRL, and PBO by CSCV with 16 partitions (12,870 splits).
+- `research/metrics.py` (§12.2): daily excess returns, annualized return, excess return and
+  volatility, Sharpe, maximum drawdown, longest time underwater, 97.5% ES, CER (risk aversion
+  3), and the robustness pack's leave-one-year-out rows. `backtest_metrics` measures a backtest
+  from its metric start (warm-up excluded) and refuses a gap in the cash index.
+- Tests: the Appendix F goldens on the real functions (Holm; MinTRL about 10.82 and 2.71 years;
+  PSR = 0.5 at SR = SR*; DSR falls as N rises); SR0* against a simulated expected maximum; a
+  pairing test (a constant-shift challenger reaches the p-value floor 1 / (B + 1)); stationary
+  path checks; PBO near 0.5 on noise and near 0 for a persistent edge; hand-computed metrics;
+  the metrics and the bootstrap on the fixture runs.
+- Appendix F note: the full MinTRL formula gives 10.83 years at a Sharpe of 0.5 (2.71 at 1.0);
+  the guide's "about 10.82" is its leading term (z / SR)^2, so the test allows 0.02 years.
+- Implementation choices, to confirm: the bootstrap p-value from the centred distribution,
+  p = (1 + #{d* - d >= d}) / (B + 1); r_ex as the arithmetic difference of daily returns; the
+  annualized excess return as 252 x mean(r_ex), used for the research gate's "net excess
+  return" and the leave-one-out rows; ES as the mean of the worst ceil(2.5% x T) daily losses;
+  sample variances (ddof 1) with population skewness and kurtosis; PBO drops the earliest
+  T mod 16 sessions and ranks ordinally.
+- Still to build in M5: gate statistics with average scales (the gate log will record weights
+  in and out), the §12.3 benchmarks with the same cash handling, the rest of the robustness
+  pack (leave-one-instrument-out, which needs per-fund P&L, and the one-session delay), the
+  register loader, PBO over the trial ledger, and the research reports.
+
 ### Amendment v1.7 — approved readings, final ceiling, known-in-advance events, cash sleeve, robustness pack (2026-11-14, approved by the user)
 - A (§9.2, §9.3, §9.4, §12.2): the seven v1.6 readings are approved wording and lose their "to
   confirm" markers. No special case for gate cuts: the band compares the final gated target with

@@ -16,6 +16,8 @@ from himari.data.ingest import SeriesNames
 from himari.data.storage import VersionedStore
 from himari.execution.costs import load_cost_model
 from himari.gates.events import load_events
+from himari.research.metrics import backtest_metrics, excess_returns, measured_series
+from himari.research.stats import paired_bootstrap, sharpe_rows
 from himari.risk.state_machine import SafetyStore
 from himari.sim.engine import Backtest, BacktestResult, BacktestSettings
 from himari.sim.market import MarketTruth, PointInTimeData
@@ -272,6 +274,31 @@ class TestSafetyPaths:
         assert len(alerts) == 1 and alerts[0].startswith(
             "2025-04-24 VCN distribution (ex-date 2025-03-25"
         )
+
+
+class TestResearchMetrics:
+    """M5: §12.2 metrics and the §12.4 paired bootstrap on the engine's own fixture runs."""
+
+    def test_metrics_start_after_the_warm_up(self, runs: list[BacktestResult]) -> None:
+        days, nav, cash = measured_series(runs[0])
+        assert days[0] == summarize(runs[0]).metric_start == date(2025, 1, 3)
+        assert len(days) == len(nav) == len(cash)
+
+    def test_2x_costs_lower_the_return_metrics(self, runs: list[BacktestResult]) -> None:
+        one, two = (backtest_metrics(r, CFG.research) for r in runs[:2])
+        assert two.annual_excess_return < one.annual_excess_return
+        assert two.cer < one.cer and two.sharpe < one.sharpe
+        assert one.es > 0 and two.es > 0
+        assert one.max_drawdown == pytest.approx(summarize(runs[0]).max_drawdown)
+
+    def test_the_paired_bootstrap_runs_on_engine_returns(self, runs: list[BacktestResult]) -> None:
+        """2x against 1x on the same sessions: 2x is not an improvement."""
+        (_, n1, c1), (_, n2, c2) = measured_series(runs[0]), measured_series(runs[1])
+        res = paired_bootstrap(
+            excess_returns(n1, c1), excess_returns(n2, c2), sharpe_rows, resamples=500,
+            seed=CFG.research.seed,
+        )  # fmt: skip
+        assert res.observed < 0 and res.p_value > 0.5
 
 
 class TestCashSleeve:
