@@ -1,9 +1,12 @@
 # Official release times for the event gate (§8.4, v1.5), 2018.
 # Collected politely from the official sites by scripts/events/ (see source_url).
-# Only scheduled releases; unscheduled ones could not be known at the decision close.
+# Scheduled releases, plus unscheduled announcements kept for crisis replays.
 # time_assumed: true means only the date is published and the institution's standard
 # time is used (ECB 13:45 CET, 14:15 CET from 2022-07-21; SNB 09:30; BoJ 12:00 JST;
 # StatCan 08:30 ET).
+# unscheduled: true marks announcements not on the published calendar in advance; the
+# event gate ignores them (v1.7). rescheduled: true marks releases moved from their
+# published date (notice_url); the gate uses them only from announced_utc.
 events:
   - {type: CA_LFS, release_utc: '2018-01-05T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/180105/dq180105a-eng.htm', retrieved_utc: '2026-11-12T22:08:42+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2018-01-05T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_01052018.htm', retrieved_utc: '2026-11-12T21:54:46+00:00', version: 1, time_assumed: false}

@@ -10,6 +10,7 @@ holiday list. Regenerate with:
 
 from __future__ import annotations
 
+import bisect
 import csv
 import json
 import math
@@ -45,6 +46,10 @@ ZERO_VOLUME = {("VGV", date(2025, 8, 14))}
 REINVESTED = {("VCN", 2024): 0.0450, ("VCN", 2025): 0.0480}
 PAY_LAG_SESSIONS = 5  # synthetic: a cash distribution is paid 5 sessions after its ex-date
 CONFIRMED_AT = "2026-01-05T00:00:00+00:00"
+# v1.7: a synthetic T-bill ETF for the cash sleeve, from its own inception mid-2024. Built
+# without the random stream (so every other fixture series is unchanged): the price accrues
+# CORRA less a 0.10% fee and pays it out at each month's last session.
+SLEEVE, SLEEVE_INCEPTION, SLEEVE_PRICE, SLEEVE_FEE = "TBILL.SYN", date(2024, 7, 2), 50.0, 0.10
 
 # Synthetic Bank of Canada closures: the synthetic FX/CORRA publication record skips these
 # weekdays (chosen to exercise Easter bridges, Remembrance Day, etc.)
@@ -121,6 +126,46 @@ def _boc_days() -> list[date]:
 def _pay_date(calendar: str, ex_date: date) -> date:
     later = sessions(calendar, ex_date + timedelta(days=1), ex_date + timedelta(days=30))
     return later[PAY_LAG_SESSIONS - 1]
+
+
+def _sleeve(corra: list[list[str]]) -> list[tuple[str, str]]:
+    """The synthetic sleeve fund's bars (primary and cross-check) and monthly distributions;
+    returns its December ex-dates for Q10."""
+    rates = [(date.fromisoformat(d), float(v)) for d, v in corra]
+    rate_days = [r for r, _ in rates]
+    days = sessions("XTSE", SLEEVE_INCEPTION, END)
+    months = {(d.year, d.month) for d in days}
+    month_ends = {max(d for d in days if (d.year, d.month) == ym) for ym in months}
+    accrued, prev, rows, actions = 0.0, days[0], [], []
+    for d in days:
+        # the latest CORRA dated before d, as the cash index uses the previous session's rate
+        rate = rates[max(bisect.bisect_left(rate_days, d) - 1, 0)][1]
+        accrued += SLEEVE_PRICE * (rate - SLEEVE_FEE) / 100.0 * (d - prev).days / 365.0
+        prev = d
+        dist = round(accrued, 4) if d in month_ends else 0.0
+        close = round(SLEEVE_PRICE + accrued - dist, 2)
+        rows.append([d, close, dist])
+        if dist:
+            accrued -= dist
+            pay = _pay_date("XTSE", d).isoformat()
+            actions.append([d.isoformat(), pay, "cash", f"{dist:.4f}", "CAD"])
+    factor, adj = 1.0, [0.0] * len(rows)
+    for i in range(len(rows) - 1, -1, -1):
+        adj[i] = round(rows[i][1] * factor, 6)
+        if i > 0:
+            factor *= rows[i][1] / (rows[i][1] + rows[i][2])
+    bars, xbars = [], []
+    for i, (d, c, _) in enumerate(rows):
+        o = rows[i - 1][1] if i else c
+        hi, lo = round(max(o, c) + 0.01, 2), round(min(o, c) - 0.01, 2)
+        bars.append([d.isoformat(), o, hi, lo, c, 1_000_000, adj[i]])
+        xbars.append([d.isoformat(), o, hi, lo, c, 1_000_000])
+    head = ["session_date", "open", "high", "low", "close", "volume"]
+    _write(ROOT / "primary" / "bars" / f"{SLEEVE}.csv", [*head, "adj_close"], bars)
+    _write(ROOT / "crosscheck" / "bars" / f"{SLEEVE}.csv", head, xbars)
+    _write(ROOT / "primary" / "actions" / f"{SLEEVE}.csv",
+           ["ex_date", "pay_date", "type", "amount", "currency"], actions)  # fmt: skip
+    return [(SLEEVE, a[0]) for a in actions if a[0][5:7] == "12"]
 
 
 def main() -> None:
@@ -212,6 +257,7 @@ def main() -> None:
         )
         corra.append([d.isoformat(), f"{base + rng.normal(0.0, 0.01):.2f}"])
     _write(ROOT / "primary" / "series" / "AVG.INTWO.csv", ["date", "value"], corra)
+    december.extend(_sleeve(corra))
 
     # Q10 (v1.6): the December cash/reinvested splits, "confirmed" for the synthetic set
     records = [

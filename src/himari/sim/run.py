@@ -32,6 +32,18 @@ if TYPE_CHECKING:
 
 DEMO_START, DEMO_END = date(2024, 1, 2), date(2025, 12, 31)
 DEMO_OBSERVED = datetime(2026, 1, 5, tzinfo=UTC)
+# v1.7: the fixture set's SYNTHETIC cash-sleeve fund; its half spread and duration are invented
+# for the demo (the 10 bp per-side floor applies whatever the half spread)
+DEMO_SLEEVE, DEMO_SLEEVE_HALF_SPREAD_BPS, DEMO_SLEEVE_DURATION = "TBILL.SYN", 1.0, 0.15
+BROKER_CASH = "cash at the broker"  # the sensitivity label when the sleeve is on
+
+
+def demo_config(cfg: FrozenConfig) -> FrozenConfig:
+    """The frozen config with the synthetic sleeve fund (the real symbol is the user's pick)."""
+    sleeve = cfg.cash_sleeve.model_copy(
+        update={"symbol": DEMO_SLEEVE, "duration_years": DEMO_SLEEVE_DURATION}
+    )
+    return cfg.model_copy(update={"cash_sleeve": sleeve})
 
 
 def fixture_root(project_root: Path) -> Path:
@@ -61,7 +73,7 @@ def ingest_demo_fixtures(
     if not market.exists():
         raise FileNotFoundError(f"fixture data not found at {market}; run from the repository")
     store = VersionedStore(root)
-    symbols = [i.symbol for i in cfg.stage1.instruments()]
+    symbols = [i.symbol for i in cfg.stage1.instruments()] + [DEMO_SLEEVE]
     eod = time.fromisoformat(cfg.schedule.daily_job_after_et)
     span = (date(2024, 1, 1), DEMO_END)
     for folder, name in (("primary", "csv"), ("crosscheck", "xcheck")):
@@ -116,6 +128,7 @@ class RunPlan:
     primary: str = "csv"
     crosscheck: str | None = None
     fill_at: str = "close"
+    sleeve_half_spread_bps: float | None = None  # only for a sleeve not in costs_v1.yaml (demo)
 
 
 def run_backtests(
@@ -127,7 +140,10 @@ def run_backtests(
     forward: HolidayFile | None = None,
     confirmations: ConfirmationStore | None = None,
 ) -> list[BacktestResult]:
-    """One backtest per cost multiplier; each gets its own safety store under work_dir."""
+    """One backtest per cost multiplier; each gets its own safety store under work_dir.
+
+    With the cash sleeve on, the sleeve runs are the baseline of record and the same plan runs
+    again with idle cash at the broker, labelled as a sensitivity (v1.7)."""
     confirmed = confirmations.confirmed() if confirmations else None
     confirmed_actions = confirmations.confirmed("Q10") if confirmations else None
     data = PointInTimeData(
@@ -137,16 +153,25 @@ def run_backtests(
         store, plan.primary, SeriesNames(cfg.sources.fx_series, cfg.sources.cash_rate_series)
     )
     events = load_events(project_root / "config" / "events", cfg.events.map.keys())
+    variants = [(cfg, "")]
+    if cfg.cash_sleeve.active:
+        off = cfg.cash_sleeve.model_copy(update={"enabled": False})
+        variants.append((cfg.model_copy(update={"cash_sleeve": off}), BROKER_CASH))
     results = []
-    for m in plan.multipliers:
-        costs = load_cost_model(project_root / "config" / "costs_v1.yaml", m, plan.commissions)
-        safety_path = work_dir / f"{m:g}x" / "safety.sqlite"
-        if safety_path.exists():
-            raise FileExistsError(f"{safety_path} exists; each run needs a fresh safety store")
-        settings = BacktestSettings(plan.start, plan.end, plan.initial_cad, m, plan.fill_at)
-        results.append(
-            Backtest(cfg, data, truth, costs, events, settings, SafetyStore(safety_path)).run()
-        )
+    for run_cfg, label in variants:
+        for m in plan.multipliers:
+            costs = load_cost_model(project_root / "config" / "costs_v1.yaml", m, plan.commissions)
+            sleeve = run_cfg.cash_sleeve.symbol if run_cfg.cash_sleeve.active else None
+            if sleeve is not None and plan.sleeve_half_spread_bps is not None:
+                costs = costs.with_symbol(sleeve, plan.sleeve_half_spread_bps)
+            settings = BacktestSettings(
+                plan.start, plan.end, plan.initial_cad, m, plan.fill_at, label
+            )
+            safety_path = work_dir / settings.run_name / "safety.sqlite"
+            if safety_path.exists():
+                raise FileExistsError(f"{safety_path} exists; each run needs a fresh safety store")
+            bt = Backtest(run_cfg, data, truth, costs, events, settings, SafetyStore(safety_path))
+            results.append(bt.run())
     return results
 
 
@@ -160,7 +185,7 @@ def write_outputs(
 ) -> Path:
     """Per-run files under out_dir/<m>x/ and one HTML report for all runs."""
     for r in results:
-        write_run(r, out_dir / f"{r.settings.cost_multiplier:g}x")
+        write_run(r, out_dir / r.settings.run_name)
     report = out_dir / "report.html"
     report.write_text(
         html_report(results, title, data_label, commission_label, notices),
@@ -202,7 +227,7 @@ def log_trials(
                 metrics_json=json.dumps(metrics, sort_keys=True),
                 p_value=None,
                 result="completed",
-                notes=notes,
+                notes=notes + (f" | sensitivity: {r.settings.label}" if r.settings.label else ""),
             )
         )
         ids.append(tid)

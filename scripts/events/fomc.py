@@ -20,7 +20,9 @@ def _blocks() -> list[str]:
     cal = fetch(f"{BASE}/monetarypolicy/fomccalendars.htm")[0].decode("utf-8", "replace")
     out += re.split(r'<div class="[^"]*\bfomc-meeting\b(?![_-])[^"]*"', cal)[1:]
     for year in range(2015, 2021):
-        page = fetch(f"{BASE}/monetarypolicy/fomchistorical{year}.htm")[0].decode("utf-8", "replace")
+        page = fetch(f"{BASE}/monetarypolicy/fomchistorical{year}.htm")[0].decode(
+            "utf-8", "replace"
+        )
         out += page.split('<div class="panel panel-default panel-padded">')[1:]
     return out
 

@@ -1,9 +1,12 @@
 # Official release times for the event gate (§8.4, v1.5), 2025.
 # Collected politely from the official sites by scripts/events/ (see source_url).
-# Only scheduled releases; unscheduled ones could not be known at the decision close.
+# Scheduled releases, plus unscheduled announcements kept for crisis replays.
 # time_assumed: true means only the date is published and the institution's standard
 # time is used (ECB 13:45 CET, 14:15 CET from 2022-07-21; SNB 09:30; BoJ 12:00 JST;
 # StatCan 08:30 ET).
+# unscheduled: true marks announcements not on the published calendar in advance; the
+# event gate ignores them (v1.7). rescheduled: true marks releases moved from their
+# published date (notice_url); the gate uses them only from announced_utc.
 events:
   - {type: CA_LFS, release_utc: '2025-01-10T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/250110/dq250110a-eng.htm', retrieved_utc: '2026-11-12T22:19:09+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2025-01-10T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_01102025.htm', retrieved_utc: '2026-11-12T21:51:27+00:00', version: 1, time_assumed: false}
@@ -59,6 +62,7 @@ events:
   - {type: CA_LFS, release_utc: '2025-08-08T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/250808/dq250808a-eng.htm', retrieved_utc: '2026-11-12T22:19:27+00:00', version: 1, time_assumed: true}
   - {type: US_CPI, release_utc: '2025-08-12T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_08122025.htm', retrieved_utc: '2026-11-12T21:45:56+00:00', version: 1, time_assumed: false}
   - {type: CA_CPI, release_utc: '2025-08-19T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/250819/dq250819a-eng.htm', retrieved_utc: '2026-11-13T23:19:32+00:00', version: 1, time_assumed: true}
+  - {type: FOMC, release_utc: '2025-08-22T14:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20250822a.htm', retrieved_utc: '2026-11-15T00:27:14+00:00', version: 1, time_assumed: false, unscheduled: true}
   - {type: CA_LFS, release_utc: '2025-09-05T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/250905/dq250905a-eng.htm', retrieved_utc: '2026-11-12T22:19:29+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2025-09-05T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_09052025.htm', retrieved_utc: '2026-11-12T21:51:08+00:00', version: 1, time_assumed: false}
   - {type: ECB, release_utc: '2025-09-11T12:15:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2025/html/ecb.mp250911~6afb7a9490.en.html', retrieved_utc: '2026-11-12T21:42:01+00:00', version: 1, time_assumed: true}
@@ -70,20 +74,20 @@ events:
   - {type: SNB, release_utc: '2025-09-25T07:30:00+00:00', source_url: 'https://www.snb.ch/en/publications/communication/press-releases-restricted/pre_20250925', retrieved_utc: '2026-11-12T21:42:47+00:00', version: 1, time_assumed: true}
   - {type: CA_LFS, release_utc: '2025-10-10T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251010/dq251010a-eng.htm', retrieved_utc: '2026-11-12T22:19:31+00:00', version: 1, time_assumed: true}
   - {type: CA_CPI, release_utc: '2025-10-21T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251021/dq251021a-eng.htm', retrieved_utc: '2026-11-13T23:19:37+00:00', version: 1, time_assumed: true}
-  - {type: US_CPI, release_utc: '2025-10-24T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_10242025.htm', retrieved_utc: '2026-11-12T21:45:51+00:00', version: 1, time_assumed: false}
+  - {type: US_CPI, release_utc: '2025-10-24T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_10242025.htm', retrieved_utc: '2026-11-12T21:45:51+00:00', version: 1, time_assumed: false, rescheduled: true, notice_url: 'https://www.bls.gov/bls/092025-cpi-reschedule-notice.htm', announced_utc: '2025-10-11T03:59:59+00:00'}
   - {type: BOC, release_utc: '2025-10-29T13:45:00+00:00', source_url: 'https://www.bankofcanada.ca/2025/10/fad-press-release-2025-10-29/', retrieved_utc: '2026-11-12T16:14:27+00:00', version: 1, time_assumed: false}
   - {type: FOMC, release_utc: '2025-10-29T18:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20251029a.htm', retrieved_utc: '2026-11-12T15:57:37+00:00', version: 1, time_assumed: false}
   - {type: BOJ, release_utc: '2025-10-30T03:00:00+00:00', source_url: 'https://www.boj.or.jp/en/mopo/mpmdeci/mpr_2025/k251030a.pdf', retrieved_utc: '2026-11-12T15:52:55+00:00', version: 1, time_assumed: true}
   - {type: ECB, release_utc: '2025-10-30T13:15:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2025/html/ecb.mp251030~cf0540b5c0.en.html', retrieved_utc: '2026-11-12T21:42:01+00:00', version: 1, time_assumed: true}
   - {type: CA_LFS, release_utc: '2025-11-07T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251107/dq251107a-eng.htm', retrieved_utc: '2026-11-12T22:19:34+00:00', version: 1, time_assumed: true}
   - {type: CA_CPI, release_utc: '2025-11-17T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251117/dq251117a-eng.htm', retrieved_utc: '2026-11-13T23:19:39+00:00', version: 1, time_assumed: true}
-  - {type: US_NFP, release_utc: '2025-11-20T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_11202025.htm', retrieved_utc: '2026-11-12T21:51:06+00:00', version: 1, time_assumed: false}
+  - {type: US_NFP, release_utc: '2025-11-20T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_11202025.htm', retrieved_utc: '2026-11-12T21:51:06+00:00', version: 1, time_assumed: false, rescheduled: true, notice_url: 'https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm'}
   - {type: CA_LFS, release_utc: '2025-12-05T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251205/dq251205a-eng.htm', retrieved_utc: '2026-11-12T22:19:36+00:00', version: 1, time_assumed: true}
   - {type: BOC, release_utc: '2025-12-10T14:45:00+00:00', source_url: 'https://www.bankofcanada.ca/2025/12/fad-press-release-2025-12-10/', retrieved_utc: '2026-11-12T16:14:29+00:00', version: 1, time_assumed: false}
   - {type: FOMC, release_utc: '2025-12-10T19:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20251210a.htm', retrieved_utc: '2026-11-12T15:55:02+00:00', version: 1, time_assumed: false}
   - {type: SNB, release_utc: '2025-12-11T08:30:00+00:00', source_url: 'https://www.snb.ch/en/publications/communication/press-releases-restricted/pre_20251211', retrieved_utc: '2026-11-12T21:42:47+00:00', version: 1, time_assumed: true}
   - {type: CA_CPI, release_utc: '2025-12-15T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/251215/dq251215a-eng.htm', retrieved_utc: '2026-11-13T23:19:42+00:00', version: 1, time_assumed: true}
-  - {type: US_NFP, release_utc: '2025-12-16T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_12162025.htm', retrieved_utc: '2026-11-12T21:51:04+00:00', version: 1, time_assumed: false}
+  - {type: US_NFP, release_utc: '2025-12-16T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_12162025.htm', retrieved_utc: '2026-11-12T21:51:04+00:00', version: 1, time_assumed: false, rescheduled: true, notice_url: 'https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm'}
   - {type: ECB, release_utc: '2025-12-18T13:15:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2025/html/ecb.mp251218~58b0e415a6.en.html', retrieved_utc: '2026-11-12T21:42:01+00:00', version: 1, time_assumed: true}
-  - {type: US_CPI, release_utc: '2025-12-18T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_12182025.htm', retrieved_utc: '2026-11-12T21:45:48+00:00', version: 1, time_assumed: false}
+  - {type: US_CPI, release_utc: '2025-12-18T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_12182025.htm', retrieved_utc: '2026-11-12T21:45:48+00:00', version: 1, time_assumed: false, rescheduled: true, notice_url: 'https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm'}
   - {type: BOJ, release_utc: '2025-12-19T03:00:00+00:00', source_url: 'https://www.boj.or.jp/en/mopo/mpmdeci/mpr_2025/k251219a.pdf', retrieved_utc: '2026-11-12T15:52:55+00:00', version: 1, time_assumed: true}

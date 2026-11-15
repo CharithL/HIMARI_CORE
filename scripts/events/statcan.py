@@ -13,17 +13,35 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
-
 from polite import fetch
 
 ET = ZoneInfo("America/Toronto")
 BASE = "https://www150.statcan.gc.ca/n1/daily-quotidien"
-MONTHS = {m: i for i, m in enumerate(
-    ["January", "February", "March", "April", "May", "June", "July", "August", "September",
-     "October", "November", "December"], start=1)}
+MONTHS = {
+    m: i
+    for i, m in enumerate(
+        [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ],
+        start=1,
+    )
+}
 TITLE = {"CA_LFS": "Labour Force Survey", "CA_CPI": "Consumer Price Index"}
-START_WINDOW = {"CA_LFS": (date(2015, 1, 5), date(2015, 1, 16)),
-                "CA_CPI": (date(2015, 1, 14), date(2015, 1, 27))}
+START_WINDOW = {
+    "CA_LFS": (date(2015, 1, 5), date(2015, 1, 16)),
+    "CA_CPI": (date(2015, 1, 14), date(2015, 1, 27)),
+}
 
 
 def _decode(raw: bytes) -> str:
@@ -93,13 +111,15 @@ def collect(kind: str) -> tuple[list[dict[str, object]], list[str]]:
     events: list[dict[str, object]] = []
     while found is not None and day.year <= 2025:
         url, text, retrieved = found
-        events.append({
-            "type": kind,
-            "release_utc": datetime.combine(day, time(8, 30), ET).astimezone(ZoneInfo("UTC")),
-            "source_url": url,
-            "retrieved_utc": retrieved,
-            "time_assumed": True,
-        })
+        events.append(
+            {
+                "type": kind,
+                "release_utc": datetime.combine(day, time(8, 30), ET).astimezone(ZoneInfo("UTC")),
+                "source_url": url,
+                "retrieved_utc": retrieved,
+                "time_assumed": True,
+            }
+        )
         nxt = _next_date(text, kind, day)
         if nxt is None:
             problems.append(f"{kind} {day}: no next-release date in the article")

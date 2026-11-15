@@ -310,6 +310,7 @@ def backtest(
         end = _parse_date(to_date, runner.DEMO_END)
         schedule = commissions or root / "tests" / "fixtures" / "commissions_demo.yaml"
         primary, crosscheck = "csv", crosscheck or "xcheck"  # the fixture set's two sources
+        cfg = runner.demo_config(cfg)  # the synthetic cash-sleeve fund (v1.7)
     else:
         if commissions is None:
             typer.echo(
@@ -320,7 +321,10 @@ def backtest(
         start = _parse_date(from_date, date(2015, 1, 1))
         end = _parse_date(to_date, date(2025, 12, 31))
         schedule = commissions
-    plan = runner.RunPlan(start, end, cash, _COSTS[costs], schedule, primary, crosscheck, fill_at)
+    plan = runner.RunPlan(
+        start, end, cash, _COSTS[costs], schedule, primary, crosscheck, fill_at,
+        runner.DEMO_SLEEVE_HALF_SPREAD_BPS if demo else None,
+    )  # fmt: skip
     with tempfile.TemporaryDirectory() as tmp:
         if demo:
             store = runner.ingest_demo_fixtures(cfg, root, Path(tmp) / "clean")
@@ -336,8 +340,9 @@ def backtest(
     commission_label = schedule.name + (" (SYNTHETIC)" if demo and commissions is None else "")
     notices = (
         [
-            "Synthetic fixture data and a synthetic commission schedule: the numbers show how "
-            "the system works, not how the strategy performs."
+            "Synthetic fixture data, a synthetic commission schedule and a synthetic cash-sleeve "
+            f"fund ({runner.DEMO_SLEEVE}): the numbers show how the system works, not how the "
+            "strategy performs."
         ]
         if demo
         else []
@@ -369,11 +374,18 @@ def backtest(
     typer.echo("")
     for r, tid in zip(results, ids, strict=True):
         s = summarize(r)
+        name = f"{s.cost_multiplier:g}x costs" + (f", {s.label}" if s.label else "")
         typer.echo(
-            f"{s.cost_multiplier:g}x costs: NAV {s.final_nav:,.2f} CAD, return "
+            f"{name}: NAV {s.final_nav:,.2f} CAD, return "
             f"{s.total_return:+.2%} (cash {s.cash_return:+.2%}), max drawdown "
             f"{s.max_drawdown:.2%}, costs {s.costs_cad:,.2f} CAD, trades {s.trades} [{tid}]"
         )
+        if s.sleeve:  # v1.7: the cash sleeve's own line, apart from the strategy's figures
+            typer.echo(
+                f"  sleeve {s.sleeve}: average weight {s.sleeve_avg_weight:.1%}, turnover "
+                f"{s.sleeve_turnover:.2f}/yr, costs {s.sleeve_costs_cad:,.2f} CAD, income "
+                f"{s.sleeve_income_cad:,.2f} CAD, trades {s.sleeve_trades}"
+            )
         for a in r.alerts:
             typer.echo(f"  ALERT {a}")
     typer.echo(f"Report: {report}")

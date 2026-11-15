@@ -1,7 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
-Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6) v1.4 (12 November 2026: §7.3 order and common scale) and v1.5 (12 November 2026: resume, loss floor, event archive, kill switch, M4 demo), marked *(v1.1)* to *(v1.5)*. Log in Appendix G. v1.2 adds `data_quality.fx_bridge_max_calendar_days` and v1.5 adds `account.loss_floor_cad`; no existing parameter changed.
+Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6), v1.4 (12 November 2026: §7.3 order and common scale), v1.5 (12 November 2026: resume, loss floor, event archive, kill switch, M4 demo), v1.6 (13 November 2026: band and post-trade check, order reasons, cash interest, warm-up, reinvested distributions) and v1.7 (14 November 2026: approved readings, final ceiling, known-in-advance events, cash sleeve, robustness pack, crypto comparator text), marked *(v1.1)* to *(v1.7)*. Log in Appendix G. v1.2 adds `data_quality.fx_bridge_max_calendar_days`, v1.5 `account.loss_floor_cad`, v1.6 `rebalance.gate_tolerance_rel` and `account.initial_nav_cad`, and v1.7 the `cash_sleeve` block. v1.6 and v1.7 amend frozen rules (§9.2; §8.1, §8.4 and the new §7.4); no existing parameter value changed.
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -49,7 +49,7 @@ Background documents in the user's HIMARI OPUS project explain why each choice w
 2. **No look-ahead.** A decision made after the close of session `t` uses only data released by then. Orders execute at session `t+1` at the earliest. A backtest never fills at the close that produced the signal. Test: changing any data after `t` leaves every decision up to `t` unchanged.
 3. **Bad data never trades up.** If a required input for instrument `i` is missing, stale or flagged, its target can only stay the same or fall. Never impute prices, distributions, FX rates or signals.
 4. **Frozen parameters.** Every parameter lives in `config/frozen_v1.yaml`, and its hash is recorded in every run. Never edit a parameter after seeing a result.
-5. **Stage 1 is long-or-cash with no leverage.** At all times `w_i >= 0` and `sum(w) <= 1`. IBKR paper accounts are margin accounts by default, so enforce this in our own code.
+5. **Stage 1 is long-or-cash with no leverage.** At all times `w_i >= 0` and `sum(w) <= 1`. IBKR paper accounts are margin accounts by default, so enforce this in our own code. *(v1.7)* "Cash" means broker cash plus the cash sleeve (§7.4); the sleeve is never part of `w`.
 6. **Unused risk stays in cash.** When an instrument is off, unavailable or capped, its budget is never redistributed to other instruments.
 7. **Everything is recorded.** Every backtest, register test and paper decision is appended to a ledger together with the code hash, config hash and data version. Nothing is deleted, failed runs included.
 8. **Costs.** Every research result is run at 1× and 2× costs. Pass or fail is decided at 2×.
@@ -263,6 +263,25 @@ s_i,t = 1 if m_i,t > 0 else 0                          # exactly 0 means off
 
 The result is often below the 8% ceiling because caps bind. That is by design: never scale up to "use" the ceiling. A golden example is in Appendix F.
 
+### 7.4 Cash sleeve *(v1.7)*
+
+Idle CAD cash is held in one CAD-listed T-bill or money-market ETF (`cash_sleeve.symbol`). It is cash management only: no signal, no risk budget, not part of `w`, not scaled by any gate, and left out of `σ_p` and the stress gate. In rule 5, "cash" means broker cash plus the sleeve. NAV includes the sleeve; risk weights are computed over the eight funds only.
+
+- **Config** (`frozen_v1.yaml`, Appendix B): `cash_sleeve: {enabled: true, symbol: null, buffer_nav: 0.02, buffer_min_cad: 200, band_nav: 0.03, band_min_cad: 1000}`. The sleeve runs only when it is enabled and has a symbol; while `symbol` is null, idle cash stays at the broker. The user picks the fund (candidates checked on the issuers' sites: `docs/cash_sleeve_candidates.md`).
+- **Weekly rule**, after the risk order plan is built (§9.1). `C` is the CAD cash expected after that plan: its buys and sells at their reference prices moved by the cost model, commissions, the CAD spent funding USD buys (with the 1% buffer) and any USD surplus converted back. `buffer = max(0.02 × NAV, 200)` and `band = max(0.03 × NAV, 1000)`:
+
+  | Condition | Order | Reason | Shares |
+  |---|---|---|---|
+  | `C < buffer / 2` | sell sleeve to bring `C` back to `buffer`; always trades (no band, no CAD 100 minimum), at most the holding | `sleeve_funding` | rounded up, net of costs |
+  | `C > buffer + band` | buy sleeve with `C - buffer` | `sleeve_sweep` | rounded down, costs included |
+  | otherwise | no sleeve order | | |
+
+- **Execution:** same session and same cost model as the risk orders, with no cheaper treatment: the sleeve's half spread is measured like any fund's (§11), and a run refuses to start without one. Backtest: the session's sales are applied before its buys, and the sleeve buy fills after the risk buys. Paper and live: sales first, buys as cash becomes available; if cash can't cover a buy by the cancel time, the buys are cut pro rata and logged. CAD and USD cash never go negative.
+- **States:** `KILL` and `VENUE_FAULT` stop all sleeve orders. A data fault on the sleeve stops sleeve buys only. HALVED and SUSPENDED don't affect it.
+- **Inception:** the sleeve is used only from the fund's own inception; before that, cash stays at the broker. No proxy in the baseline.
+- **Diagnostic:** each decision logs the sleeve's loss under the +50 bp yield shock (§8.5). It is not a gate. *To confirm:* the loss, as a share of NAV, is the sleeve's weight × `duration_years` × 0.005, with `cash_sleeve.duration_years` taken from the chosen fund's factsheet (null until then, and no diagnostic).
+- **Reports:** gross exposure, time in market and strategy turnover exclude the sleeve; sleeve turnover, costs, income and trades get their own lines; every §12.3 benchmark uses the same cash handling. With the sleeve on, it is the baseline of record, and "cash at the broker" (the same run with the sleeve off) is a labelled sensitivity.
+
 ---
 
 ## 8. Risk gates and the state machine
@@ -277,12 +296,15 @@ Gates run in this fixed order:
 4. stress gate (§8.5)
 5. drawdown state (§8.6)
 6. faults and kill switch (§8.7)
+7. *(v1.7)* final ceiling: the volatility ceiling again (§8.2)
 
 Each gate is a pure function `apply(weights_in, current_holdings, context) -> (weights_out, GateLog)`. The rule-1 invariant is checked after every gate, in tests and at runtime; a violation raises an error and the run stops.
 
 ### 8.2 Portfolio volatility ceiling (frozen)
 
 `σ_p = sqrt(wᵀ Σ w)`. If `σ_p > 0.08`, multiply every weight by `0.08 / σ_p`.
+
+*(v1.7)* **Final ceiling re-check.** The ceiling runs again as the last gate (`final_ceiling`): if `σ_p > 0.08` on the fully gated targets, every weight is multiplied by `0.08 / σ_p`. The gates in between only cut, but cutting one side of a negatively correlated pair can raise `σ_p`. A property test checks that after the last gate `σ_p ≤ 0.08` and every stress loss is within its limit, for random holdings, states and capped funds. The stress gate needs no second pass with today's loadings: no fund gains in a loss scenario, so a cut can't raise a scenario loss. A test fails if a future config breaks that (a fund that gains in a scenario where another fund loses).
 
 ### 8.3 Daily safety check (frozen)
 
@@ -298,6 +320,10 @@ Each session after the close, compute `σ_p` for the **current holdings**. If it
 - **Storage:** `config/events/events_YYYY.yaml`, with `type`, `release_utc`, `source_url`, `retrieved_utc` and `version`. A historical archive covering 2015–2025 is required for backtests; the report must name any event types that are missing. *(v1.5)* Entries are collected politely from the official sites, with times as published; when only the date is published, the institution's standard time is used and the entry is flagged `time_assumed`.
 - **Window:** from the decision close to the end of the execution session.
 - **Rule:** affected instruments (`events.map` in config) cannot be increased; `target_i = min(target_i, current_i)`. Cuts are allowed. There are no automatic exits before events and no restoring trades after them; the next weekly decision handles that.
+- *(v1.7)* **Known in advance only** (rule 2). The gate uses only releases that were on the published calendar before the decision close.
+  - **Unscheduled** announcements (intermeeting decisions, emergency statements, notation votes) stay in the archive with `unscheduled: true` for the crisis replays, and the gate ignores them. Checked: the Fed's 3 and 15 March 2020 cuts (the Sunday 15 March cut falls inside the 13 March decision window); the Bank of Canada's 13 and 27 March 2020 cuts; the BoJ's 16 March 2020 meeting (its 18–19 March meeting, brought forward on 15 March after the Fed's cut); the ECB's 18 March 2020 decision; the SNB's 15 January 2015 removal of the franc floor. The archive holds 15 unscheduled entries (FOMC 7, BoC 2, BoJ 2, ECB 1, SNB 3). Their pages mostly publish no time, so they use the institution's standard time, flagged `time_assumed`.
+  - **Rescheduled** releases keep the date they actually happened, flagged `rescheduled: true` with the official notice in `notice_url`. One counts for the gate from `announced_utc`, when its new date was published; without a dated notice the gate ignores it. 2025 was checked against the BLS revised schedule (https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm): the October CPI and October jobs reports were cancelled, the September jobs report moved from 3 October to 20 November, and the November jobs report and CPI from 5 and 10 December to 16 and 18 December; the September CPI moved from 15 to 24 October (separate BLS notice, last modified 10 October 2025, its `announced_utc`). The archive has 11 US CPI and 11 US jobs releases for 2025, 4 of them rescheduled.
+  - Coverage (missing event types per year) counts scheduled releases only.
 - Register test H6 checks a stronger version (a 50% cap). It is not part of the baseline.
 
 ### 8.5 Stress gate (frozen)
@@ -348,13 +374,14 @@ Each session after the close, compute `σ_p` for the **current holdings**. If it
 5. Compute the targets.
 6. Run the gates.
 7. Apply the band.
-8. Save an order plan with a unique `decision_id`, set to execute in the next session.
+8. *(v1.7)* Plan the cash-sleeve order from the CAD cash expected after the risk orders (§7.4).
+9. Save an order plan with a unique `decision_id`, set to execute in the next session.
 
 ### 9.2 Rebalance band (frozen)
 
 Trade instrument `i` only if `abs(w_target_i - w_current_i) > max(0.005, 0.10 * abs(w_current_i))`.
 
-~~Exceptions that always trade: full exits (target 0 with a nonzero holding), cuts forced by the gates, and daily safety cuts.~~ *(v1.6, replaces the line above)* Exceptions that always trade: full exits (target 0 with a nonzero holding), daily safety cuts (§8.3), and the cut on entering HALVED. Cuts by the other gates follow the band like any other target. *Implementation reading, to confirm:* entering HALVED is the first weekly decision whose drawdown state is HALVED after one that was not; the forced cuts are the funds the drawdown gate cut below their holding.
+~~Exceptions that always trade: full exits (target 0 with a nonzero holding), cuts forced by the gates, and daily safety cuts.~~ *(v1.6, replaces the line above)* Exceptions that always trade: full exits (target 0 with a nonzero holding), daily safety cuts (§8.3), and the cut on entering HALVED. Cuts by the other gates follow the band like any other target. *(v1.7)* "Entering HALVED" is the first weekly decision taken in HALVED after one that wasn't; the cut that always trades is each fund the drawdown gate cut below its holding. No special case for gate cuts: the band compares the final gated target with the holding, and where the change came from doesn't matter (the fixture run's 2025-03-07 VCN trim stays).
 
 *(v1.6)* **Post-trade limit check.** After the band, the post-trade portfolio is the holdings plus this decision's banded trades. If its `σ_p` or any stress loss (single-factor or joint, §8.5) exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10, i.e. 10% of the limit):
 
@@ -366,9 +393,9 @@ Buys therefore always shrink before any holding is cut beyond the band's plan; a
 ### 9.3 Orders
 
 - **Shares:** `shares_i = trunc(w_i * NAV_CAD / price_CAD_i)`, rounded toward zero. Skip orders under CAD 100 and log them.
-- *(v1.6)* **Reason and gates on every order.** Each order records why it exists, one of `band` (outside the band), `full_exit`, `post_trade_limit` (traded only by the post-trade fallback), `halved` (the cut on entering HALVED) or `safety_cut` (§8.3), plus every gate that cut that fund at the decision with the scale it applied (weight out / weight in). Logs and the trade list show both. *Implementation, to confirm:* a buy the post-trade check shrank keeps its reason (`band`) and lists `post_trade_buys` with the shrink scale among its gates.
+- *(v1.6)* **Reason and gates on every order.** Each order records why it exists, one of `band` (outside the band), `full_exit`, `post_trade_limit` (traded only by the post-trade fallback), `halved` (the cut on entering HALVED) or `safety_cut` (§8.3), plus every gate that cut that fund at the decision with the scale it applied (weight out / weight in). Logs and the trade list show both. *(v1.7)* A buy the post-trade check shrank keeps reason `band` and lists `post_trade_buys` with its scale. Cash-sleeve orders carry `sleeve_funding` or `sleeve_sweep` (§7.4).
 - **PDBC funding:**
-  - Before buying, convert CAD to USD to cover the buy plus a 1% buffer. Tag the conversion `fx_funding`. *Implementation reading, to confirm:* the buy includes its estimated commission (without it a small remainder could never fill).
+  - Before buying, convert CAD to USD to cover the buy plus a 1% buffer. Tag the conversion `fx_funding`. *(v1.7)* USD funding covers the buy's estimated commission (without it a small remainder could never fill).
   - Sales leave the proceeds in USD.
   - Convert surplus USD back to CAD at a weekly decision when it exceeds 2% of NAV.
 - **Backtest:** use the fill model in §10.4.
@@ -377,13 +404,14 @@ Buys therefore always shrink before any holding is cut beyond the band's plan; a
   - Cancel anything unfilled at 15:55; the old position stays.
   - Retry in the next session, up to 2 more sessions, then alert.
   - Every order carries an idempotency key built from `decision_id` and the instrument.
+  - *(v1.7)* Before M7, find out from IBKR's documentation whether a Canadian cash account can buy with the proceeds of a same-day sale. Rotations and sleeve funding depend on it.
 
 ### 9.4 Ledger
 
 - **Contents:** cash in CAD and USD, positions, trades, commissions, conversions, distributions, withholding, NAV in CAD and the high-water mark. *(v1.6)* Also interest and reinvested distributions.
 - **Distributions:** entitlement is booked on the ex-date and cash on the pay date. US-listed distributions have withholding applied at the configured rate (placeholder 15%; confirm with a Canadian tax advisor). *(v1.6)* An entitlement still unpaid 30 days after its ex-date raises an alert. A reinvested distribution (§5.5) is recorded and moves no cash.
 - **Two FX rates:** keep the valuation rate (Bank of Canada) separate from the execution rate (broker). Currency conversions are tagged so they never count as strategy trades.
-- *(v1.6)* **Cash interest** (`costs_v1.yaml` `cash_interest`, placeholders to verify on IBKR's interest-rate page before M6). Interest accrues daily on **settled** cash per currency and is posted monthly (credited at the first session of the next month); the accrued, unposted amount counts in NAV. Per currency: nothing on the first `zero_first` (CAD 13,000; USD 10,000), then `benchmark - spread_below_benchmark` (CORRA - 0.50% for CAD), times `NAV_USD / full_rate_nav_usd` when NAV is below US$100,000. USD has no benchmark proxy and earns 0 in Stage 1. A trade's cash settles after `settlement_days` business days (T+3, then T+2 for trades from 2017-09-05, then T+1 from 2024-05-27 in Canada and 2024-05-28 in the US, per the SEC and CSA notices). *Implementation choices, to confirm:* accrual counts calendar days / 365 at CORRA for the previous session, as the cash index (§5.6); settlement days are counted on the fund's exchange calendar (settlement-system holidays are not modelled); distributions, interest and conversions are settled when credited; a month's interest is posted at the first session of the next month; the simulator plays the broker (it accrues and posts) and the ledger books each posting as reported; the cost multiplier does not scale interest. `account.initial_nav_cad` (placeholder 100,000) is the planned account size and the default starting cash, so it sets the tiers. Excess returns are still measured against the full CORRA cash line (§5.6), and every §12.3 benchmark uses the same cash model.
+- *(v1.6)* **Cash interest** (`costs_v1.yaml` `cash_interest`, placeholders to verify on IBKR's interest-rate page before M6). Interest accrues daily on **settled** cash per currency and is posted monthly (credited at the first session of the next month); the accrued, unposted amount counts in NAV. Per currency: nothing on the first `zero_first` (CAD 13,000; USD 10,000), then `benchmark - spread_below_benchmark` (CORRA - 0.50% for CAD), times `NAV_USD / full_rate_nav_usd` when NAV is below US$100,000. USD has no benchmark proxy and earns 0 in Stage 1. A trade's cash settles after `settlement_days` business days (T+3, then T+2 for trades from 2017-09-05, then T+1 from 2024-05-27 in Canada and 2024-05-28 in the US, per the SEC and CSA notices). *(v1.7)* Interest accrues at the previous session's CORRA over calendar days / 365, as the cash index (§5.6), and posts on the next month's first session. Settlement days count on the exchange calendar (settlement-system holidays are not modelled); distributions, interest and FX conversions settle when credited. The cost multiplier never scales interest. In the backtest the simulator is the broker: it accrues and posts, and the ledger books each posting as reported. *(v1.7)* Before M7, decide how the interest and distributions the broker credits are matched against the modelled amounts, so reconciliation (§9.5) compares like with like. `account.initial_nav_cad` (placeholder 100,000) is the planned account size and the default starting cash, so it sets the tiers. Excess returns are still measured against the full CORRA cash line (§5.6), and every §12.3 benchmark uses the same cash model.
 
 ### 9.5 Reconciliation
 
@@ -487,6 +515,12 @@ Rules:
 - **Route C (optional):** Alpaca paper crypto.
 - **Rules:** long-or-cash; 365-bar lookback (24/7 market); EWMA half-life of 20 bars; volatility floor 30%; budgets BTC 50% and ETH 50%; sleeve ceiling 8%. The weekly decision is taken on the bar ending Saturday 00:00 UTC and executed on the next bar.
 - **Separation:** it has its own ledger and report. It is never mixed into Stage 1 results, is not part of the register, and has no effect on Stage 1 promotion.
+- *(v1.7, guide text only: build nothing for crypto now; a separate Crypto Lab guide will replace M9.)*
+  - Annualize with 365 bars on the spot route (A) and 252 on the ETF route (B).
+  - The cash leg is CAD. Stablecoins are never cash.
+  - Stress scenario: BTC −25% and ETH −30% in a day, with the 3% limit; plus a diagnostic at −40% and −45%.
+  - Outage test: fills 1 and 3 bars late.
+  - Benchmarks: CAD cash; buy-and-hold BTC/ETH 50/50; the same scaling and gates with every signal on.
 
 ---
 
@@ -494,7 +528,7 @@ Rules:
 
 - **ETF cost per side** = `max(10 bp, half_spread + 1 bp)` plus the broker commission. Use half-spreads measured from 60 normal sessions of quotes; the config holds placeholders until then.
 - **Currency conversion:** the broker's actual cost (placeholder 5 bp). Never assume a zero FX fee.
-- **Stress sessions** (event windows and crises in replays): spreads × 5.
+- **Stress sessions** (event windows and crises in replays): spreads × 5. *(v1.7, to confirm)* Every archived event marks its funds' execution session as stressed, unscheduled ones included: that only raises costs and never changes a decision, so it uses no look-ahead.
 - **Futures (Stage 2):** US$1.50 per contract per side plus 1 tick of slippage (MTN: 2 ticks). Micro FX: US$1.00 per contract plus 1 tick.
 - **Crypto:** taker fee (placeholder 40 bp) plus the half-spread, with a minimum of 5 bp.
 - Every research run is done at 1× and 2× costs. Pass or fail is decided at **2×**.
@@ -521,7 +555,8 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
 - **Certainty-equivalent return:** `CER = 252 * mean(r_ex) - (3/2) * 252 * var(r_ex)`, with risk aversion 3.
 - Gate statistics: how often each gate binds, and the average scale it applies.
 - *(v1.6)* Average gross exposure (the mean of `sum(|w_i|)` over the measured sessions).
-- *(v1.6)* **Warm-up excluded.** Metrics start at the later of the window start and the first weekly decision with at least one valid signal (*implementation reading, to confirm:* a fund with a computed trend signal, on or off). Before that the portfolio cannot hold anything, so its all-cash sessions would dilute return, turnover and time in market. Charts shade the warm-up and reports state where measurement starts.
+- *(v1.7)* Gross exposure, time in market and strategy turnover exclude the cash sleeve (§7.4); sleeve turnover, costs and income are reported on their own lines.
+- *(v1.6)* **Warm-up excluded.** Metrics start at the later of the window start and the first weekly decision with at least one valid signal (*(v1.7)* a valid signal is any computed signal, on or off). Before that the portfolio cannot hold anything, so its all-cash sessions would dilute return, turnover and time in market. Charts shade the warm-up and reports state where measurement starts.
 
 ### 12.3 Benchmarks (always reported)
 
@@ -529,7 +564,11 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
 2. **Buy-and-hold of the same eight funds** with the same budgets, caps, ceiling and stress gate, but with every signal on. This separates the value of the trend signal from the value of volatility scaling.
 3. Unscaled timing: equal weights with the trend signal and no volatility scaling.
 
-*(v1.6)* Benchmarks 2 and 3 run through the same ledger, so their idle cash earns interest under the same cash model (§9.4).
+*(v1.6)* Benchmarks 2 and 3 run through the same ledger, so their idle cash earns interest under the same cash model (§9.4). *(v1.7)* Every benchmark uses the same cash handling as the baseline, the cash sleeve included (§7.4).
+
+*(v1.7)* **Robustness pack** (M5). Reported with the baseline, labelled, and never used to choose anything; each run is logged as `adhoc` in the trial ledger (§12.6).
+- **Leave-one-out:** the 2× net excess return with each calendar year removed, and with each instrument's P&L removed. This is how the research gate's "no dependence on a single crisis or a single instrument" (§12.7) is judged: every row must stay positive.
+- **Delay:** every fill one session later.
 
 ### 12.4 Statistics
 
@@ -569,7 +608,7 @@ Every run is appended, failures and ad-hoc explorations included. Rows are never
 **Research gate** (baseline, and any challenger claimed as better), all at 2× costs:
 - positive net excess return and positive CER
 - at least 5 years of common tradable history and at least 3 non-overlapping annual out-of-sample blocks
-- no dependence on a single crisis or a single instrument
+- no dependence on a single crisis or a single instrument (*(v1.7)* judged by the leave-one-out rows of the robustness pack, §12.3: every row positive)
 - Holm pass for challengers
 - DSR ≥ 0.95, with the trial-count caveat, and MinTRL reported
 
@@ -614,6 +653,9 @@ A 90-day run checks operations; it cannot prove a slow strategy's edge. At a Sha
   - The gates' cut-only invariant holds for random weights, holdings and states.
   - Weights are always ≥ 0, sum to at most 1, and respect the caps.
   - No look-ahead: perturbing data after `t` changes nothing at or before `t`.
+  - *(v1.7)* After the last gate, `σ_p ≤ 0.08` and every stress loss is within its limit, for random holdings, states and capped funds (§8.2).
+- *(v1.7)* **Config guard:** a test fails if any fund gains in a stress scenario where another fund loses (§8.2).
+- *(v1.7)* **Lint:** ruff covers `src/`, `tests/` and `scripts/`; the event collectors build a backtest input.
 - **Determinism:** the same fixture run twice produces byte-identical decision logs (golden files).
 - **Failure-mode tests** ported from Layer 2's catalog (Appendix E). Each must behave as stated:
   - stale data → no additions
@@ -680,11 +722,11 @@ IB Gateway must be running and logged in to the paper account. If the user autom
 | M2 | Strategy and risk: signal, EWMA, correlation shrinkage, covariance, sizing | Golden tests (Appendix F); property tests for weights and caps |
 | M3 | Gates and state machine: ceiling, daily check, events, stress, drawdown, faults, kill | Cut-only property test; stress goldens; persistence tests |
 | M4 | Simulator: clocks, data, `SimBroker`, cost model, ledger, weekly loop, band, reconciliation | No-look-ahead and determinism tests; 1× and 2× runs on fixtures. *(v1.5)* `himari backtest --demo` runs the fixture data, prints a weekly log (signals, gates that bound and why, orders, fills, costs, NAV) and writes a one-page HTML report (NAV vs cash, weights over time, trade list) |
-| M5 | Research engine: metrics, CER, ES, bootstrap, Holm, PSR/DSR/MinTRL, PBO, trial ledger, register loader, reports | Golden tests (Appendix F); reports render |
-| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks. *(v1.6)* Before real data: every December distribution in the history confirmed (Q10); the event archive holds all nine §8.4 types for 2015–2025; `tests/fixtures/commissions_demo.yaml` replaced by the IBKR schedule; the `cash_interest` placeholders verified on IBKR's interest-rate page | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
-| M7 | **Paper trading and shadow run:** live clock and quotes (IBKR), `QuotePaperBroker`, `IBKRPaperBroker`, dashboard, alerts, scheduler, kill switch | One week of dry runs; then the 90-day shadow run starts, with the operational checklist tracked automatically |
+| M5 | Research engine: metrics, CER, ES, bootstrap, Holm, PSR/DSR/MinTRL, PBO, trial ledger, register loader, reports. *(v1.7)* The robustness pack (§12.3) | Golden tests (Appendix F); reports render |
+| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks. *(v1.6)* Before real data: every December distribution in the history confirmed (Q10); the event archive holds all nine §8.4 types for 2015–2025; `tests/fixtures/commissions_demo.yaml` replaced by the IBKR schedule; the `cash_interest` placeholders verified on IBKR's interest-rate page. *(v1.7)* The user picks the cash-sleeve fund and its half spread is measured; the IBKR pricing plan and the account size are asked again (`account.initial_nav_cad` stays at the 100,000 placeholder until then) | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
+| M7 | **Paper trading and shadow run:** live clock and quotes (IBKR), `QuotePaperBroker`, `IBKRPaperBroker`, dashboard, alerts, scheduler, kill switch. *(v1.7)* Before M7: whether a Canadian cash account can buy with same-day sale proceeds (§9.3), and how broker-credited interest and distributions are matched against the modelled amounts (§9.4) | One week of dry runs; then the 90-day shadow run starts, with the operational checklist tracked automatically |
 | M8 | Register tests in order (H1, H2, …) on historical data while the shadow run continues | Each test logged; Holm applied once the family's endpoints are reached |
-| M9 | Crypto comparator (simulation only) | Runs alongside without touching the Stage 1 ledgers; separate report |
+| M9 | Crypto comparator (simulation only). *(v1.7)* To be replaced by the user's Crypto Lab guide; build nothing for crypto until then | Runs alongside without touching the Stage 1 ledgers; separate report |
 | M10 | Stage 2 (§17), only after a Stage 1 promotion record exists | Its own tests, then its own shadow run |
 
 ---
@@ -752,7 +794,7 @@ Each of these is excluded from the core:
 | Needed for | Item |
 |---|---|
 | M1 | Choice of end-of-day vendor and its API key, and permission for network access on the user's PC |
-| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports. *(v1.6)* The account size goes in `account.initial_nav_cad` (it sets the interest tiers); the IBKR pricing plan and its commission schedule; the cash/reinvested split of every December distribution, from the issuers' announcements |
+| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports. *(v1.6)* The account size goes in `account.initial_nav_cad` (it sets the interest tiers); the IBKR pricing plan and its commission schedule; the cash/reinvested split of every December distribution, from the issuers' announcements. *(v1.7)* The cash-sleeve fund (`cash_sleeve.symbol`), from `docs/cash_sleeve_candidates.md` |
 | M7 | IBKR account with a paper login; market-data subscriptions shared with the paper account; IB Gateway or TWS installed |
 | Promotion | Canadian tax advice on account type and withholding; a signed promotion record |
 | DSR | The best available estimate of how many strategies the old Explorer tested (it may be unknown) |
@@ -894,6 +936,15 @@ stress:
 account:
   loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
   initial_nav_cad: 100000 # amendment v1.6: placeholder for the planned account size; sets the interest tiers
+
+cash_sleeve:                # amendment v1.7 (section 7.4): idle CAD cash in one CAD-listed T-bill ETF
+  enabled: true
+  symbol: null              # the user picks the fund; null keeps idle cash at the broker
+  buffer_nav: 0.02          # buffer = max(0.02 x NAV, 200)
+  buffer_min_cad: 200
+  band_nav: 0.03            # band = max(0.03 x NAV, 1000)
+  band_min_cad: 1000
+  duration_years: null      # from the chosen fund's factsheet; for the +50 bp diagnostic
 
 drawdown:
   halve_at: -0.10
@@ -1144,3 +1195,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 | v1.4 | 12 November 2026 | User | §7.3: `k = 0.08 / sqrt(bᵀ ρ_s b)` over the whole frozen universe, an instrument without 252 sessions included with zero correlation (weight 0, budget in cash); caps and the cash constraint act on the all-on weights `a = k u`, and signals are applied last (`w = a s`), so switching a signal off never raises another weight (rule 6). Appendix F sizing toy case: after caps `[0.25, 0.25, 0.15]`, sum 0.65; after signals `[0.25, 0.25, 0]`; final volatility 0.038324. No parameter changed. |
 | v1.5 | 12 November 2026 | User | §8.6: `resume` resets the drawdown reference to the current NAV (old HWM kept in the record) and is refused below the new `account.loss_floor_cad` (null allowed in backtest and paper, required before live). §8.4: event archive collected from the official sites, times as published, `time_assumed` when only the date is published, missing types named in reports. §8.7: KILL sends no orders, cuts included, and from M7 cancels open broker orders; signed record = hash chain + OS user + UTC time, verified at startup. §16: M4 adds `himari backtest --demo`. Config hash changes. |
 | v1.6 | 13 November 2026 | User | Amends a frozen rule. §9.2: band exceptions are full exits, daily safety cuts and the cut on entering HALVED; other gate cuts follow the band; a post-trade check shrinks this decision's buys pro rata, then trades every fund to its gated target, when `σ_p` or a stress loss exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10). §9.3: every order records its reason and the gates that cut it, with their scales. §9.4: interest on settled cash per `costs_v1.yaml` `cash_interest` (placeholders) and `settlement_days`, posted monthly; `account.initial_nav_cad` (placeholder 100,000) sets the tiers; an alert for a distribution unpaid 30 days after its ex-date. §12.2: the warm-up before the first valid signal is excluded from metrics and shaded on charts; average gross exposure reported. §12.3: benchmarks use the same cash model. §5.5 and §6: action type `reinvested` (`D_t = 0`), check Q10 with `ACTION_UNCONFIRMED`, confirmations name their check. §16 M6 and §20: prerequisites before real data. New keys `rebalance.gate_tolerance_rel` and `account.initial_nav_cad` (frozen config hash `b7563f9b…`), `cash_interest` and `settlement_days` (costs config). Implementation choices marked "to confirm" in §9.2, §9.3, §9.4 and §12.2 are not part of the approval. |
+| v1.7 | 14 November 2026 | User | Amends frozen rules. §9.2, §9.3, §9.4, §12.2: the seven v1.6 readings approved as worded (entering HALVED; a shrunk buy keeps `band` and lists `post_trade_buys`; USD funding covers the commission; interest at the previous session's CORRA, calendar days / 365, posted on the next month's first session; settlement days on the exchange calendar, with distributions, interest and FX conversions settled when credited; the cost multiplier never scales interest; a valid signal is any computed signal); no special case for gate cuts. §8.1, §8.2: a final ceiling re-check as the last gate, with a property test and a config guard (no fund gains in a loss scenario). §8.4: the event gate uses only releases on the published calendar before the decision close; unscheduled announcements are archived with `unscheduled: true` and ignored; rescheduled releases keep their actual date, flagged `rescheduled: true`, and count from `announced_utc`. §7.4 (new), §2 rule 5, §9.1: the cash sleeve, with the new `cash_sleeve` block in `frozen_v1.yaml` (frozen config hash `de69ce67…`). §12.3, §12.7: the M5 robustness pack (leave-one-out by year and by instrument at 2×, every row positive; fills one session later; logged `adhoc`). §10.7: crypto comparator text for M9 (nothing built). §9.3, §9.4, §16: questions to settle before M7. §14: `scripts/` linted. Not part of the approval (marked "to confirm"): `cash_sleeve.duration_years` and the sleeve diagnostic formula (§7.4); unscheduled events still stress execution costs (§11). |

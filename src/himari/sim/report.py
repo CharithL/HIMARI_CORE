@@ -15,14 +15,14 @@ import io
 import json
 import math
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from himari.sim.engine import BacktestResult
+    from himari.sim.engine import BacktestResult, NavPoint
 
 # Categorical slots in universe order, so a fund keeps its colour in every chart. Validated
 # light and dark with the dataviz palette validator; three light slots are under 3:1 against
@@ -72,6 +72,14 @@ class Summary:
     gate_binds: dict[str, tuple[int, int]]  # gate -> (decisions where it bound, decisions)
     receivables_without_pay_date_cad: float
     alerts: int
+    label: str = ""  # the sensitivity label, if any
+    # the cash sleeve (v1.7): kept apart from the strategy's exposure, turnover and costs
+    sleeve: str | None = None
+    sleeve_avg_weight: float = 0.0
+    sleeve_turnover: float = 0.0
+    sleeve_costs_cad: float = 0.0
+    sleeve_income_cad: float = 0.0
+    sleeve_trades: int = 0
 
     @property
     def costs_cad(self) -> float:
@@ -87,12 +95,15 @@ def metric_start(res: BacktestResult) -> date:
     return res.nav[-1].day
 
 
-def _fill_costs(res: BacktestResult, since: date) -> tuple[float, float, float]:
-    """Commissions, spread and impact, and traded value from `since`, in CAD."""
+def _fill_costs(
+    res: BacktestResult, since: date, sleeve: bool = False
+) -> tuple[float, float, float]:
+    """Commissions, spread and impact, and traded value from `since`, in CAD: the strategy's
+    fills, or with sleeve=True the cash sleeve's."""
     rate = {p.day: p.usd_to_cad for p in res.nav}
     commissions = spread = traded = 0.0
     for day, det in res.fills:
-        if day < since:
+        if day < since or (det.fill.symbol == res.sleeve) != sleeve:
             continue
         fx = 1.0 if det.currency == "CAD" else rate[day]
         f = det.fill
@@ -162,12 +173,36 @@ def summarize(res: BacktestResult) -> Summary:
         turnover=traded / 2.0 / (sum(nav) / len(nav)) / years,
         time_in_market=sum(1 for p in points if p.weights) / len(points),
         avg_gross_exposure=sum(sum(p.weights.values()) for p in points) / len(points),
-        trades=sum(1 for t in res.ledger.trades if t.day >= m0),
+        trades=sum(1 for t in res.ledger.trades if t.day >= m0 and t.symbol != res.sleeve),
         unfilled=len(res.unfilled),
         gate_binds={g: (b[0], b[1]) for g, b in binds.items()},
         receivables_without_pay_date_cad=recv,
         alerts=len(res.alerts),
+        label=res.settings.label,
+        **_sleeve_lines(res, m0, points, years),
     )
+
+
+def _sleeve_lines(
+    res: BacktestResult, m0: date, points: Sequence[NavPoint], years: float
+) -> dict[str, Any]:
+    if res.sleeve is None:
+        return {}
+    commissions, spread, traded = _fill_costs(res, m0, sleeve=True)
+    avg_nav = sum(p.nav for p in points) / len(points)
+    income = sum(
+        float(r.net) for r in res.ledger.distributions if r.symbol == res.sleeve and r.ex_date >= m0
+    )
+    return {
+        "sleeve": res.sleeve,
+        "sleeve_avg_weight": sum(p.sleeve_weight for p in points) / len(points),
+        "sleeve_turnover": traded / 2.0 / avg_nav / years,
+        "sleeve_costs_cad": commissions + spread,
+        "sleeve_income_cad": income,
+        "sleeve_trades": sum(
+            1 for t in res.ledger.trades if t.symbol == res.sleeve and t.day >= m0
+        ),
+    }
 
 
 # ---- text --------------------------------------------------------------------------------
@@ -272,6 +307,20 @@ def weekly_log(res: BacktestResult) -> list[str]:
         skipped = [f"{s.symbol} ({s.reason})" for s in r.get("skipped", [])]
         tail = f" | skipped: {', '.join(skipped)}" if skipped else ""
         lines.append(f"   orders   {', '.join(orders) or 'none'}{tail}")
+        sl = r.get("sleeve")
+        if sl:
+            sleeve_orders = [
+                f"{x['order'].side} {x['order'].shares} {sl['symbol']} [{x['order'].reason}]"
+                for x in sl.get("orders", [])
+            ]
+            if "expected_cad" in sl:
+                cash = _cad(sl["expected_cad"])
+                limits = f"buffer {_cad(sl['buffer'])}, band {_cad(sl['band'])}"
+                note = f"; {sl['note']}" if sl.get("note") else ""
+                shown = ", ".join(sleeve_orders) or "no order"
+                lines.append(f"   sleeve   {shown} (CAD after plan {cash}, {limits}){note}")
+            else:
+                lines.append(f"   sleeve   {sl.get('note', '')}")
         comm = spread = 0.0
         fills = fills_by_decision.get(r["decision_id"], [])
         for day, det in fills:
@@ -568,11 +617,18 @@ def html_report(
     base = next((v for v in main.cash_level if math.isfinite(v)), math.nan)
     cash_nav = [initial * v / base if math.isfinite(v) else math.nan for v in main.cash_level]
     colors = ["--nav1", "--nav2"]
+    base_runs = [(r, s) for r, s in zip(results, sums, strict=True) if not s.label]
     series: list[tuple[str, str, Sequence[float]]] = [
         (f"NAV {s.cost_multiplier:g}x costs", colors[i % 2], [p.nav for p in r.nav])
-        for i, (r, s) in enumerate(zip(results, sums, strict=True))
+        for i, (r, s) in enumerate(base_runs)
     ]
+    for r, s in zip(results, sums, strict=True):  # one sensitivity line, at the first multiplier
+        if s.label and s.cost_multiplier == base_runs[0][1].cost_multiplier:
+            series.append(
+                (f"NAV {s.cost_multiplier:g}x, {s.label}", "--s3", [p.nav for p in r.nav])
+            )
     series.append(("CAD cash", "--cash", cash_nav))
+    base_sums = [s for _, s in base_runs]
     symbols = list(main.universe)
     by_day = {p.day: p for p in main.nav}
     wdays = [_d(r["date"]) for r in main.records if r["kind"] == "decision"]
@@ -607,7 +663,13 @@ def html_report(
         out.append(f'<div class="notice">{esc(text)}</div>')
     for r, s in zip(results, sums, strict=True):
         for a in r.alerts:
-            out.append(f'<div class="notice crit">{s.cost_multiplier:g}x: {esc(a)}</div>')
+            out.append(f'<div class="notice crit">{esc(_column(s))}: {esc(a)}</div>')
+    if any(s.label for s in sums) and main.sleeve:
+        text = (
+            f"Idle CAD cash is held in the cash sleeve ({main.sleeve}): these runs are the "
+            'baseline of record. The runs labelled "cash at the broker" are a sensitivity.'
+        )
+        out.append(f'<div class="notice">{esc(text)}</div>')
     if sums[0].receivables_without_pay_date_cad:
         recv = _cad(sums[0].receivables_without_pay_date_cad)
         text = (
@@ -622,17 +684,17 @@ def html_report(
             "div", {"class": "kpi"}, "".join(_tag("div", {"class": c}, esc(t)) for c, t in parts)
         )
 
-    mults = " / ".join(f"{s.cost_multiplier:g}x" for s in sums)
-    cash_note = f"cash {_pct(sums[0].cash_return, 2)}"
+    mults = " / ".join(f"{s.cost_multiplier:g}x" for s in base_sums)
+    cash_note = f"cash {_pct(base_sums[0].cash_return, 2)}"
     tiles = [
-        kpi("Final NAV (CAD)", [_cad(s.final_nav) for s in sums], mults),
-        kpi("Total return", [_pct(s.total_return, 2) for s in sums], cash_note),
-        kpi("Excess over cash", [_pct(s.excess_return, 2) for s in sums], mults),
-        kpi("Max drawdown", [_pct(s.max_drawdown, 2) for s in sums], mults),
-        kpi("Costs (CAD)", [_cad(s.costs_cad) for s in sums], "commissions, spread, impact, FX"),
-        kpi("Volatility", [_pct(s.annual_vol, 2) for s in sums], "annualized, daily NAV"),
-        kpi("Avg gross exposure", [_pct(s.avg_gross_exposure, 1) for s in sums], mults),
-        kpi("Interest (CAD)", [_cad(s.interest_cad) for s in sums], "on settled cash"),
+        kpi("Final NAV (CAD)", [_cad(s.final_nav) for s in base_sums], mults),
+        kpi("Total return", [_pct(s.total_return, 2) for s in base_sums], cash_note),
+        kpi("Excess over cash", [_pct(s.excess_return, 2) for s in base_sums], mults),
+        kpi("Max drawdown", [_pct(s.max_drawdown, 2) for s in base_sums], mults),
+        kpi("Costs (CAD)", [_cad(s.costs_cad) for s in base_sums], "strategy trades and FX"),
+        kpi("Volatility", [_pct(s.annual_vol, 2) for s in base_sums], "annualized, daily NAV"),
+        kpi("Avg gross exposure", [_pct(s.avg_gross_exposure, 1) for s in base_sums], mults),
+        kpi("Interest (CAD)", [_cad(s.interest_cad) for s in base_sums], "on settled cash"),
     ]
     out.append(_tag("div", {"class": "kpis"}, "".join(tiles)))
 
@@ -648,7 +710,8 @@ def html_report(
         f'<span><i style="background:var(--s{k + 1})"></i>{esc(s)}</span>'
         for k, s in enumerate(symbols)
     )
-    legend = _tag("div", {"class": "legend"}, keys + "<span>remainder: cash</span>")
+    rest = "remainder: cash (broker cash and sleeve)" if main.sleeve else "remainder: cash"
+    legend = _tag("div", {"class": "legend"}, keys + f"<span>{rest}</span>")
     chart = _weights_chart(wdays, symbols, wvals, warm_w)
     out.append(_tag("div", {"class": "card"}, legend + chart))
     rows = [
@@ -680,10 +743,23 @@ def html_report(
         ["Unfilled order remainders", *(str(s.unfilled) for s in sums)],
         ["Alerts", *(str(s.alerts) for s in sums)],
     ]
+    if any(s.sleeve for s in sums):
+
+        def per_run(fmt: Callable[[Summary], str]) -> list[str]:
+            return [fmt(s) if s.sleeve else "-" for s in sums]
+
+        srows += [
+            ["Cash sleeve fund", *(s.sleeve or "none (cash at the broker)" for s in sums)],
+            ["Sleeve average weight", *per_run(lambda s: _pct(s.sleeve_avg_weight, 1))],
+            ["Sleeve turnover (one-way, per year)", *per_run(lambda s: _pct(s.sleeve_turnover, 1))],
+            ["Sleeve costs (CAD)", *per_run(lambda s: _cad(s.sleeve_costs_cad))],
+            ["Sleeve income (CAD)", *per_run(lambda s: _cad(s.sleeve_income_cad))],
+            ["Sleeve trades", *per_run(lambda s: str(s.sleeve_trades))],
+        ]
     for g in sorted({g for s in sums for g in s.gate_binds}):
         counts = [s.gate_binds.get(g, (0, 0)) for s in sums]
         srows.append([f"Gate bound: {g}", *(f"{b} of {n} decisions" for b, n in counts)])
-    out.append(_table(["", *(f"{s.cost_multiplier:g}x costs" for s in sums)], srows))
+    out.append(_table(["", *(_column(s) for s in sums)], srows))
 
     out.append(f"<h2>Trades ({sums[0].cost_multiplier:g}x costs)</h2>")
     trows = [
@@ -723,6 +799,10 @@ def html_report(
     out.append(f"<script>{_asset('report.js')}</script>")
     out.append("</div></body></html>")
     return "\n".join(out)
+
+
+def _column(s: Summary) -> str:
+    return f"{s.cost_multiplier:g}x costs" + (f", {s.label}" if s.label else "")
 
 
 def _d(value: Any) -> date:

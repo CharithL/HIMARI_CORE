@@ -47,7 +47,13 @@ class GateRun:
 def run_gates(
     weights_in: Mapping[str, float], holdings: Mapping[str, float], ctx: GateContext
 ) -> GateRun:
-    """data -> volatility ceiling -> event -> stress -> drawdown -> faults and kill switch."""
+    """data -> volatility ceiling -> event -> stress -> drawdown -> faults and kill switch ->
+    final volatility ceiling (v1.7).
+
+    The event, drawdown and fault gates cap funds at their holdings; capping a negatively
+    correlated fund can raise sigma_p above the ceiling, so the ceiling runs again last. No
+    second stress pass is needed while no fund gains in a loss scenario (a cut can then never
+    raise a scenario loss); a test on the config guards that."""
     w = dict(weights_in)
     logs: list[GateLog] = []
     steps: list[Callable[[dict[str, float]], tuple[dict[str, float], GateLog]]] = [
@@ -57,6 +63,9 @@ def run_gates(
         lambda x: apply_stress_gate(x, ctx.stress),
         lambda x: apply_drawdown_gate(x, holdings, ctx.drawdown_state, ctx.halve_multiplier),
         lambda x: apply_fault_gate(x, holdings, ctx.venue_fault, ctx.kill),
+        lambda x: apply_vol_ceiling(
+            x, ctx.symbols, ctx.covariance, ctx.vol_ceiling, gate_name="final_ceiling"
+        ),
     ]
     for step in steps:
         out, log = step(w)

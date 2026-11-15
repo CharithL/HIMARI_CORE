@@ -147,6 +147,7 @@ class SimBroker:
         cash: Mapping[str, Decimal],
         stressed: Callable[[str, date], bool] = lambda symbol, day: False,
         fill_at: str = "close",
+        last_buys: frozenset[str] = frozenset(),
     ) -> None:
         if fill_at not in ("close", "open"):
             raise ValueError("fill_at must be 'close' or 'open'")
@@ -163,6 +164,7 @@ class SimBroker:
         self.fx_max_age_days = fx_max_age_days
         self.stressed = stressed
         self.fill_at = fill_at
+        self.last_buys = last_buys  # v1.7: the cash sleeve buys after every other buy
         self.day: date | None = None
         self._cash: dict[str, Decimal] = {c: money(v) for c, v in cash.items()}
         self._positions: dict[str, int] = {}
@@ -301,9 +303,11 @@ class SimBroker:
         self._fund_usd_buys(
             [o for o in tradable if o.side == "buy" and o.currency == "USD"], day, rep
         )
-        for o in tradable:
-            if o.side == "buy":
-                self._fill(o, day, rep)
+        buys = [o for o in tradable if o.side == "buy"]
+        for o in [o for o in buys if o.symbol not in self.last_buys] + [
+            o for o in buys if o.symbol in self.last_buys
+        ]:
+            self._fill(o, day, rep)
         for o in due:
             if o.status == "open" and o.attempts > self.carry_sessions:
                 o.status = "expired"

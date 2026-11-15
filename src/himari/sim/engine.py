@@ -37,7 +37,15 @@ from himari.accounting.indices import cash_index
 from himari.accounting.ledger import ConversionRecord, Ledger, Valuation
 from himari.core.clock import SimClock
 from himari.core.ids import decision_id, safety_id
-from himari.core.types import CorporateAction, DrawdownState, Exchange, Order
+from himari.core.types import (
+    AssetClass,
+    CorporateAction,
+    Currency,
+    DrawdownState,
+    Exchange,
+    Instrument,
+    Order,
+)
 from himari.data.calendars import (
     last_completed_session,
     previous_session,
@@ -50,10 +58,11 @@ from himari.execution.band import apply_band, forced_cuts
 from himari.execution.orders import USD_SURPLUS, PlannedOrder, build_orders, usd_surplus
 from himari.execution.post_trade import RiskLimits, plan_trades
 from himari.execution.reconcile import reconcile
+from himari.execution.sleeve import expected_cad_after, plan_sleeve
 from himari.gates.ceiling import daily_safety_check
 from himari.gates.events import event_window, events_in_window, missing_coverage
 from himari.gates.pipeline import GateContext, run_gates
-from himari.quality.gate import QualityInputs, run_quality_gate
+from himari.quality.gate import QualityInputs, QualityReport, run_quality_gate
 from himari.risk.covariance import covariance
 from himari.risk.state_machine import DrawdownTracker
 from himari.sim.broker import FillDetail, SimBroker, Unfilled
@@ -119,6 +128,13 @@ class BacktestSettings:
     initial_cad: Decimal
     cost_multiplier: float
     fill_at: str = "close"  # "open" is the sensitivity variant, never used for pass or fail
+    label: str = ""  # e.g. "cash at the broker" for the sensitivity run (v1.7)
+
+    @property
+    def run_name(self) -> str:
+        """Folder and column name: 1x, 2x, 1x-broker-cash, ..."""
+        tag = f"{self.cost_multiplier:g}x"
+        return f"{tag}-{self.label.replace(' ', '-')}" if self.label else tag
 
 
 @dataclass(frozen=True)
@@ -131,8 +147,9 @@ class NavPoint:
     drawdown: float
     hwm: float
     state: str
-    weights: dict[str, float]
+    weights: dict[str, float]  # risk positions only; the cash sleeve is cash (v1.7)
     accrued_interest_cad: float = 0.0
+    sleeve_weight: float = 0.0
 
 
 @dataclass
@@ -147,6 +164,7 @@ class BacktestResult:
     unfilled: list[Unfilled]
     missing_events: dict[str, list[int]]
     alerts: list[str] = field(default_factory=list)
+    sleeve: str | None = None  # the cash sleeve fund, when the run used one (v1.7)
 
     def log_lines(self) -> list[str]:
         return [dumps(r) for r in self.records]
@@ -179,10 +197,29 @@ class Backtest:
         instruments = cfg.stage1.instruments()
         self.instruments = instruments
         self.universe = tuple(i.symbol for i in instruments)
-        self.calendars = {
-            i.symbol: cfg.calendars.by_exchange[i.exchange.value] for i in instruments
-        }
-        self.currencies = {i.symbol: i.currency.value for i in instruments}
+        # the cash sleeve (§7.4, v1.7): traded and valued like a fund, never a risk position
+        self.sleeve_cfg = cfg.cash_sleeve
+        self.sleeve: str | None = cfg.cash_sleeve.symbol if cfg.cash_sleeve.active else None
+        traded = list(instruments)
+        if self.sleeve is not None:
+            if self.sleeve not in costs.half_spread_bps:
+                raise ValueError(
+                    f"no half spread for the sleeve {self.sleeve}: measure it and add it to "
+                    "costs_v1.yaml (the sleeve gets no cheaper treatment)"
+                )
+            traded.append(
+                Instrument.model_validate(
+                    {
+                        "symbol": self.sleeve,
+                        "exchange": Exchange.TSX,
+                        "currency": Currency.CAD,
+                        "class": AssetClass.CASH,
+                    }
+                )
+            )
+        self.sleeve_instruments = traded
+        self.calendars = {i.symbol: cfg.calendars.by_exchange[i.exchange.value] for i in traded}
+        self.currencies = {i.symbol: i.currency.value for i in traded}
         us_listed = frozenset(i.symbol for i in instruments if i.exchange == Exchange.NASDAQ)
         withholding = Decimal(repr(costs.us_withholding))
         self.ledger = Ledger(
@@ -201,7 +238,7 @@ class Backtest:
             costs=costs,
             calendars=self.calendars,
             currencies=self.currencies,
-            exchanges={i.symbol: i.exchange.value for i in instruments},
+            exchanges={i.symbol: i.exchange.value for i in traded},
             us_listed=us_listed,
             withholding_rate=withholding,
             participation_cap=costs.participation_cap,
@@ -211,6 +248,7 @@ class Backtest:
             cash={"CAD": settings.initial_cad},
             stressed=self.stressed,
             fill_at=settings.fill_at,
+            last_buys=frozenset({self.sleeve}) if self.sleeve else frozenset(),
         )
         self.records: list[dict[str, Any]] = []
         self.nav: list[NavPoint] = []
@@ -257,6 +295,7 @@ class Backtest:
             unfilled=self.unfilled,
             missing_events=missing,
             alerts=self.alerts,
+            sleeve=self.sleeve,
         )
 
     def _tick(self, day: date) -> None:
@@ -341,8 +380,9 @@ class Backtest:
                 status.drawdown,
                 status.hwm or val.nav,
                 status.state.value,
-                val.weights(),
+                self._risk_weights(val),
                 val.accrued_interest_cad,
+                val.weights().get(self.sleeve, 0.0) if self.sleeve else 0.0,
             )
         )
         risk = self._risk(day) if (day in self.weekly or self.ledger.positions) else None
@@ -434,7 +474,7 @@ class Backtest:
     def _daily_safety(
         self, day: date, now: datetime, val: Valuation, risk: Stage1Decision
     ) -> set[str]:
-        held = val.weights()
+        held = self._risk_weights(val)
         ceiling = self.cfg.risk.portfolio_vol_ceiling
         check = daily_safety_check(
             held, self.universe, self._cov(risk), ceiling, self.cfg.risk.daily_safety_multiple
@@ -483,7 +523,7 @@ class Backtest:
         snap = self.data.snapshot(now)
         report = run_quality_gate(
             QualityInputs(
-                instruments=self.instruments,
+                instruments=self.sleeve_instruments,
                 bars=snap.bars,
                 actions=snap.actions,
                 crosscheck=snap.crosscheck,
@@ -502,7 +542,7 @@ class Backtest:
             self.cfg.data_quality,
         )
         targets = risk.weights()
-        held = val.weights()
+        held = self._risk_weights(val)
         cov = self._cov(risk)
         start, ends = event_window(day, self.master, self.calendars)
         pre_event = events_in_window(self.events, self.cfg.events.map, start, ends)
@@ -627,7 +667,87 @@ class Backtest:
         if surplus > 0:
             self.broker.queue_conversion(USD_SURPLUS, "USD", "CAD", Decimal(repr(surplus)))
             record["fx"] = {"purpose": USD_SURPLUS, "usd": surplus}
+        if self.sleeve is not None:
+            record["sleeve"] = self._sleeve_order(did, day, now, val, orders, surplus, report)
         self.records.append(record)
+
+    def _sleeve_order(
+        self,
+        did: str,
+        day: date,
+        now: datetime,
+        val: Valuation,
+        orders: list[PlannedOrder],
+        surplus: float,
+        report: QualityReport,
+    ) -> dict[str, Any]:
+        """The weekly sleeve rule (§7.4, v1.7), after the risk order plan."""
+        assert self.sleeve is not None
+        sym = self.sleeve
+        close = self.data.last_close(sym, day, now)
+        out: dict[str, Any] = {"symbol": sym}
+        if close is None:
+            out["note"] = "before the fund's inception: cash stays at the broker"
+            return out
+        if self.safety.kill_active() or self.safety.venue_fault_active():
+            out["note"] = "KILL or VENUE_FAULT: no sleeve orders"
+            return out
+        price = close[1]
+        expected = expected_cad_after(
+            orders,
+            val.cash.get("CAD", 0.0),
+            val.cash.get("USD", 0.0),
+            val.usd_to_cad,
+            self.costs,
+            self.cfg.rebalance.fx_funding_buffer,
+            surplus,
+        )
+        quality = report.instruments.get(sym)
+        plan = plan_sleeve(
+            expected,
+            val.nav,
+            self.sleeve_cfg,
+            price,
+            self.costs.side_bps(sym),
+            lambda n, p: self.costs.commission("CAD", n, p),
+            self.ledger.positions.get(sym, 0),
+            buys_allowed=quality is not None and quality.status == "OK",
+        )
+        out.update(
+            {
+                "expected_cad": plan.expected_cad,
+                "buffer": plan.buffer,
+                "band": plan.band,
+                "note": plan.note,
+                "weight": val.weights().get(sym, 0.0),
+                "stress_loss_50bp": self._sleeve_stress(val),
+            }
+        )
+        if plan.side is not None and plan.shares > 0:
+            order = PlannedOrder(
+                decision_id=did,
+                symbol=sym,
+                side=plan.side,
+                shares=plan.shares,
+                currency="CAD",
+                reference_price=price,
+                reference_price_cad=price,
+                reason=plan.reason,
+            )
+            out["orders"] = self._submit([order])
+        return out
+
+    def _sleeve_stress(self, val: Valuation) -> float | None:
+        """Diagnostic only: the sleeve's loss, as a share of NAV, under the +50 bp shock."""
+        d = self.sleeve_cfg.duration_years
+        if d is None or self.sleeve is None:
+            return None
+        shock = (self.cfg.stress.factors["CA_YIELD"].shock_bp or 0.0) / 10_000
+        return val.weights().get(self.sleeve, 0.0) * d * shock
+
+    def _risk_weights(self, val: Valuation) -> dict[str, float]:
+        """Weights of the risk positions; the cash sleeve counts as cash (rule 5)."""
+        return {s: w for s, w in val.weights().items() if s in self.universe}
 
     # ---- helpers -----------------------------------------------------------------------
     def _submit(self, orders: list[PlannedOrder]) -> list[dict[str, Any]]:

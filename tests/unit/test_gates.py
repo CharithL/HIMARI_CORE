@@ -181,7 +181,15 @@ class TestPipeline:
         )
         run = run_gates({"VCN": 0.1, "VGV": 0.2}, {"VCN": 0.05, "VGV": 0.25}, ctx)
         names = [log.gate_name for log in run.logs]
-        assert names == ["data", "vol_ceiling", "event", "stress", "drawdown", "faults"]
+        assert names == [
+            "data",
+            "vol_ceiling",
+            "event",
+            "stress",
+            "drawdown",
+            "faults",
+            "final_ceiling",
+        ]
         assert run.orders_blocked
         assert run.weights["VCN"] == 0.05  # no addition under KILL
         assert math.isclose(run.weights["VGV"], 0.2)  # a cut passes through the weights

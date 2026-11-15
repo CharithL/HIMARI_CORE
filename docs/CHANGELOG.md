@@ -4,6 +4,65 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.7 — approved readings, final ceiling, known-in-advance events, cash sleeve, robustness pack (2026-11-14, approved by the user)
+- A (§9.2, §9.3, §9.4, §12.2): the seven v1.6 readings are approved wording and lose their "to
+  confirm" markers. No special case for gate cuts: the band compares the final gated target with
+  the holding (the fixture run's 2025-03-07 VCN trim stays).
+- B (§8.1, §8.2, §14): `final_ceiling`, the volatility ceiling run again as the seventh and last
+  gate (`gates/pipeline.py`). Property test (`tests/property/test_gates_final_ceiling.py`): after
+  the last gate `σ_p ≤ 0.08` and every stress loss within its limit, for random holdings, states
+  and capped funds. Config guard (`risk/stress.py` `gains_in_loss_scenarios`,
+  `tests/unit/test_final_ceiling.py`): fails if a fund gains in a scenario where another loses;
+  today's loadings have none.
+- C (§8.4): the event gate uses only releases on the published calendar before the decision
+  close (`Event.known_by`). The archive (`config/events/`, 941 entries) now holds 926 scheduled
+  releases (FOMC 87, BOC 88, ECB 88, SNB 44, BOJ 93, US_CPI 131, US_NFP 131, CA_CPI 132,
+  CA_LFS 132) and 15 `unscheduled: true` announcements kept for the replays and ignored by the
+  gate (FOMC 7, BoC 2, BoJ 2, ECB 1, SNB 3), including all the dates the user listed. BoJ
+  2020-03-16 moved from scheduled to unscheduled: its 18-19 March meeting was brought forward on
+  15 March, after the Fed's Sunday cut. The Fed's 15 March 2020 cut falls inside the 13 March
+  decision window and is ignored (tested). 2025: 11 US CPI and 11 US jobs releases, matching the
+  user's count; 4 are `rescheduled: true` with their BLS notices (CPI 24 October, `announced_utc`
+  from the notice last modified 10 October 2025; jobs 20 November and 16 December and CPI 18
+  December, whose notice gives no announcement date, so the gate ignores them). None of the four
+  falls in a 2025 decision window. Unscheduled entries mostly publish no time and are flagged
+  `time_assumed`. `tests/integration/test_event_archive.py`; collectors in `scripts/events/`
+  (`adjustments.py`, `write_yaml.py`).
+- D (§7.4, §2 rule 5, §9.1): the cash sleeve. New `cash_sleeve` block in `frozen_v1.yaml`
+  (`symbol: null` until the user picks the fund). `execution/sleeve.py` (`expected_cad_after`,
+  `plan_sleeve`); the engine plans the sleeve order after the risk plan and uses the sleeve only
+  from the fund's inception. KILL or VENUE_FAULT: no sleeve orders. A data fault on the sleeve:
+  no sweeps, while funding sales still go through. Each decision logs the +50 bp diagnostic. The broker fills a session's sales before its buys
+  and the sleeve buy last. Reports keep the sleeve out of exposure, time in market and strategy
+  turnover and give it its own lines; each sleeve run gets a "cash at the broker" sensitivity
+  (`<run>-cash-at-the-broker`, noted in the trial ledger). The CLI summary names the sensitivity
+  runs and prints a sleeve line. Fixture: the synthetic sleeve fund `TBILL.SYN`, from 2 July 2024
+  at 50.00, accrues the previous session's CORRA less 0.10% and pays it out each month-end. Real
+  candidates checked on the issuers' sites: `docs/cash_sleeve_candidates.md` (CBIL, TBIL, CMR,
+  ZMMK; CGOV not yet trading).
+- E (§12.3, §12.7, §16 M5): the robustness pack, as guide text; built in M5.
+- F (§10.7, §9.3, §9.4, §14, §16 M7 and M9): crypto comparator text (nothing built); two
+  questions to settle before M7; `scripts/` added to ruff (Makefile and CI).
+- G: the IBKR pricing plan and account size were not given, so `account.initial_nav_cad` stays
+  at the 100,000 placeholder; to be asked again before M6.
+- Config hash changes from `b7563f9b…` to `de69ce67…`. The run-log golden is re-pinned
+  (`2a8b67c6…` to `4f1efa7a…`): the 1x fixture run now carries the sleeve (its orders, fills and
+  distributions) and a `final_ceiling` entry in every gate log.
+- Fixed before commit: the synthetic sleeve first accrued at the highest CORRA seen so far
+  instead of the latest, about 3.9% a year instead of 2.8% in 2025; a fixture test now ties its
+  payouts to the fixture CORRA.
+- Demo (synthetic data; metrics from 2025-01-03, 258 warm-up sessions; gates bound at 52
+  decisions: event 4, stress 4, others 0, in every run):
+  - sleeve, 1x: NAV 108,933.50, +6.08% (cash +2.89%), max drawdown -3.65%, strategy costs
+    486.36, 51 trades; sleeve average weight 39.2%, 12 trades, costs 175.85, income 1,190.22.
+  - sleeve, 2x: NAV 108,153.74, +5.43%, -3.82%, costs 971.23, 51 trades; sleeve costs 351.89,
+    income 1,182.97.
+  - cash at the broker: 1x NAV 107,956.63 (+5.72%), 2x 107,469.11 (+5.25%), unchanged from v1.6.
+- Not yet approved (marked "to confirm" in the guide): `cash_sleeve.duration_years` and the
+  diagnostic as sleeve weight x duration x 0.005 (§7.4); every archived event, unscheduled
+  included, still marks its execution session as stressed in the cost model (§11). Demo only,
+  synthetic: the sleeve's 1 bp half spread and 0.15 duration (`sim/run.py`).
+
 ### Amendment v1.6 — band and post-trade limits, order reasons, cash interest, warm-up, reinvested and Q10 (2026-11-13, approved by the user)
 - §9.2 (amends a frozen rule): the band's exceptions are full exits, daily safety cuts and the
   cut on entering HALVED; other gate cuts follow the band. After the band, if the post-trade

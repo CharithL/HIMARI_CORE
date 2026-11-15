@@ -1,5 +1,6 @@
 """M4 acceptance on the fixture set (§16): 1x and 2x runs, determinism, no look-ahead, the
-amendment v1.6 band and post-trade check, interest on cash, and the safety paths."""
+amendment v1.6 band and post-trade check, interest on cash, the safety paths, and the v1.7 cash
+sleeve (the synthetic TBILL.SYN) with its cash-at-the-broker sensitivity."""
 
 import csv
 import hashlib
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from himari.core.config import load_config
+from himari.core.config import FrozenConfig, load_config
 from himari.data.ingest import SeriesNames
 from himari.data.storage import VersionedStore
 from himari.execution.costs import load_cost_model
@@ -20,9 +21,13 @@ from himari.sim.engine import Backtest, BacktestResult, BacktestSettings
 from himari.sim.market import MarketTruth, PointInTimeData
 from himari.sim.report import nav_csv, summarize, trades_csv
 from himari.sim.run import (
+    BROKER_CASH,
     DEMO_END,
+    DEMO_SLEEVE,
+    DEMO_SLEEVE_HALF_SPREAD_BPS,
     DEMO_START,
     RunPlan,
+    demo_config,
     demo_confirmations,
     fixture_root,
     ingest_demo_fixtures,
@@ -31,18 +36,23 @@ from himari.sim.run import (
 
 ROOT = Path(__file__).parents[2]
 CFG = load_config(ROOT / "config" / "frozen_v1.yaml")
+SLEEVE_CFG = demo_config(CFG)  # the baseline of record: idle cash in the synthetic sleeve
 COMMISSIONS = ROOT / "tests" / "fixtures" / "commissions_demo.yaml"
 NAMES = SeriesNames(CFG.sources.fx_series, CFG.sources.cash_rate_series)
 CASH = Decimal("100000")
-REASONS = {"band", "full_exit", "post_trade_limit", "halved", "safety_cut"}
+REASONS = {
+    "band", "full_exit", "post_trade_limit", "halved", "safety_cut", "sleeve_funding",
+    "sleeve_sweep",
+}  # fmt: skip
 
 # sha256 of the 1x run log (decisions.jsonl) on the fixture set. Change only on purpose, with a
 # CHANGELOG entry that says why.
-GOLDEN_LOG_HASH = "2a8b67c6830b8196a99f013da1cc2f9f312ff6bde0a74bc7f97f2fd679510dad"
+GOLDEN_LOG_HASH = "4f1efa7a8eaeacbd6783e0d931a2467f29a71d2200f283600c61b7a4a815ee5a"  # v1.7
 
 
 def plan(multipliers: tuple[float, ...], start: date = DEMO_START, end: date = DEMO_END) -> RunPlan:
-    return RunPlan(start, end, CASH, multipliers, COMMISSIONS, "csv", "xcheck")
+    return RunPlan(start, end, CASH, multipliers, COMMISSIONS, "csv", "xcheck", "close",
+                   DEMO_SLEEVE_HALF_SPREAD_BPS)  # fmt: skip
 
 
 def log_hash(res: BacktestResult) -> str:
@@ -50,19 +60,22 @@ def log_hash(res: BacktestResult) -> str:
 
 
 def backtest(
-    store: VersionedStore, safety: SafetyStore, start: date, end: date, multiplier: float = 1.0
+    store: VersionedStore, safety: SafetyStore, start: date, end: date, cfg: FrozenConfig = CFG
 ) -> Backtest:
-    """A single run with a caller-supplied safety store (for the KILL and fault paths)."""
+    """A single 1x run with a caller-supplied safety store (for the KILL and fault paths)."""
     conf = demo_confirmations(ROOT)
-    data = PointInTimeData(store, CFG, "csv", "xcheck", None, conf.confirmed(),
+    data = PointInTimeData(store, cfg, "csv", "xcheck", None, conf.confirmed(),
                            conf.confirmed("Q10"))  # fmt: skip
+    costs = load_cost_model(ROOT / "config" / "costs_v1.yaml", 1.0, COMMISSIONS)
+    if cfg.cash_sleeve.active:
+        costs = costs.with_symbol(DEMO_SLEEVE, DEMO_SLEEVE_HALF_SPREAD_BPS)
     return Backtest(
-        CFG,
+        cfg,
         data,
         MarketTruth(store, "csv", NAMES),
-        load_cost_model(ROOT / "config" / "costs_v1.yaml", multiplier, COMMISSIONS),
-        load_events(ROOT / "config" / "events", CFG.events.map.keys()),
-        BacktestSettings(start, end, CASH, multiplier),
+        costs,
+        load_events(ROOT / "config" / "events", cfg.events.map.keys()),
+        BacktestSettings(start, end, CASH, 1.0),
         safety,
     )
 
@@ -89,8 +102,14 @@ def store(tmp_path_factory: pytest.TempPathFactory) -> VersionedStore:
 
 @pytest.fixture(scope="module")
 def runs(store: VersionedStore, tmp_path_factory: pytest.TempPathFactory) -> list[BacktestResult]:
+    """1x and 2x with the sleeve, then the same with cash at the broker (the sensitivity)."""
     work = tmp_path_factory.mktemp("runs")
-    return run_backtests(CFG, ROOT, store, plan((1.0, 2.0)), work, None, demo_confirmations(ROOT))
+    out = run_backtests(SLEEVE_CFG, ROOT, store, plan((1.0, 2.0)), work, None,
+                        demo_confirmations(ROOT))  # fmt: skip
+    assert [r.settings.run_name for r in out] == [
+        "1x", "2x", "1x-cash-at-the-broker", "2x-cash-at-the-broker"
+    ]  # fmt: skip
+    return out
 
 
 class TestFixtureRuns:
@@ -101,13 +120,15 @@ class TestFixtureRuns:
             assert res.alerts == []
 
     def test_costs_at_2x(self, runs: list[BacktestResult]) -> None:
-        one, two = (summarize(r) for r in runs)
+        one, two = summarize(runs[0]), summarize(runs[1])
         assert two.costs_cad > 1.8 * one.costs_cad
         assert two.final_nav < one.final_nav
 
     def test_idle_cash_earns_interest(self, runs: list[BacktestResult]) -> None:
-        """v1.6: during the all-cash warm-up NAV rises with the accrual; monthly postings."""
-        res = runs[0]
+        """v1.6, with cash at the broker: during the all-cash warm-up NAV rises with the
+        accrual; monthly postings."""
+        res = runs[2]
+        assert res.settings.label == BROKER_CASH and res.sleeve is None
         warm = [p for p in res.nav if p.day < date(2024, 12, 1)]
         assert all(b.nav > a.nav for a, b in zip(warm, warm[1:], strict=False))
         postings = [r for r in res.ledger.interest if r.day.year == 2024]
@@ -137,7 +158,8 @@ class TestFixtureRuns:
     def test_every_order_has_a_reason(self, runs: list[BacktestResult]) -> None:
         for res in runs:
             assert {t.reason for t in res.ledger.trades} <= REASONS
-            assert all(t.gates for t in res.ledger.trades if t.decision_id == "D-2025-01-24-000")
+            risk = [t for t in res.ledger.trades if t.symbol != DEMO_SLEEVE]
+            assert all(t.gates for t in risk if t.decision_id == "D-2025-01-24-000")
 
     def test_post_trade_portfolios_fit(self, runs: list[BacktestResult]) -> None:
         for res in runs:
@@ -156,7 +178,7 @@ class TestDeterminism:
     def test_same_run_same_bytes(
         self, store: VersionedStore, runs: list[BacktestResult], tmp_path: Path
     ) -> None:
-        (again,) = run_backtests(CFG, ROOT, store, plan((1.0,)), tmp_path, None,
+        again, _ = run_backtests(SLEEVE_CFG, ROOT, store, plan((1.0,)), tmp_path, None,
                                  demo_confirmations(ROOT))  # fmt: skip
         assert again.log_lines() == runs[0].log_lines()
         assert nav_csv(again) == nav_csv(runs[0])
@@ -191,8 +213,8 @@ class TestNoLookAhead:
 
         market = edit_fixtures(tmp_path, shock)
         shocked_store = ingest_demo_fixtures(CFG, ROOT, tmp_path / "store", market)
-        (shocked,) = run_backtests(CFG, ROOT, shocked_store, plan((1.0,)), tmp_path / "run",
-                                   None, demo_confirmations(ROOT))  # fmt: skip
+        shocked, _ = run_backtests(SLEEVE_CFG, ROOT, shocked_store, plan((1.0,)),
+                                   tmp_path / "run", None, demo_confirmations(ROOT))  # fmt: skip
 
         def upto(res: BacktestResult) -> list[str]:
             return [line for r, line in zip(res.records, res.log_lines(), strict=True)
@@ -250,3 +272,89 @@ class TestSafetyPaths:
         assert len(alerts) == 1 and alerts[0].startswith(
             "2025-04-24 VCN distribution (ex-date 2025-03-25"
         )
+
+
+class TestCashSleeve:
+    """§7.4 (v1.7) on the synthetic sleeve fund, listed from 2 July 2024."""
+
+    def test_used_only_from_the_funds_inception(self, runs: list[BacktestResult]) -> None:
+        trades = [t for t in runs[0].ledger.trades if t.symbol == DEMO_SLEEVE]
+        first = trades[0]
+        assert (first.day, first.side, first.reason) == (date(2024, 7, 8), "buy", "sleeve_sweep")
+        before = [
+            r for r in runs[0].records if r["kind"] == "decision" and r["date"] < date(2024, 7, 5)
+        ]
+        assert before and all("inception" in r["sleeve"]["note"] for r in before)
+
+    def test_the_sleeve_is_cash_not_a_risk_position(self, runs: list[BacktestResult]) -> None:
+        res = runs[0]
+        assert all(set(p.weights) <= set(res.universe) for p in res.nav)
+        august = [p.sleeve_weight for p in res.nav if (p.day.year, p.day.month) == (2024, 8)]
+        assert min(august) > 0.95  # all but the buffer is swept
+        for r in res.records:
+            if r["kind"] == "decision":
+                assert DEMO_SLEEVE not in r["funds"]
+                assert all(DEMO_SLEEVE not in g["details"] for g in r["gates"])
+
+    def test_a_funding_sale_settles_the_same_sessions_buys(
+        self, runs: list[BacktestResult]
+    ) -> None:
+        """2025-01-06: the first risk buys need about 59,000 CAD; the sleeve sale fills first."""
+        fills = [det.fill for day, det in runs[0].fills if day == date(2025, 1, 6)]
+        assert fills[0].symbol == DEMO_SLEEVE and fills[0].side == "sell"
+        assert {f.side for f in fills[1:]} == {"buy"}
+
+    def test_the_synthetic_sleeve_pays_corra_less_its_fee(self) -> None:
+        """Fixture check: TBILL.SYN's 2025 payouts per unit, over its 50.00 price, match the
+        year's mean fixture CORRA less the 0.10% fee (SLEEVE_PRICE and SLEEVE_FEE in
+        make_market_fixtures.py) to within 0.05 percentage points."""
+        primary = ROOT / "tests" / "fixtures" / "market" / "primary"
+        with open(primary / "actions" / f"{DEMO_SLEEVE}.csv", encoding="utf-8") as f:
+            paid = sum(float(r["amount"]) for r in csv.DictReader(f) if r["ex_date"][:4] == "2025")
+        with open(primary / "series" / "AVG.INTWO.csv", encoding="utf-8") as f:
+            corra = [float(r["value"]) for r in csv.DictReader(f) if r["date"][:4] == "2025"]
+        assert paid / 50.0 * 100 == pytest.approx(sum(corra) / len(corra) - 0.10, abs=0.05)
+
+    def test_sleeve_lines_are_reported_apart(self, runs: list[BacktestResult]) -> None:
+        s, broker = summarize(runs[0]), summarize(runs[2])
+        assert s.sleeve == DEMO_SLEEVE and s.sleeve_trades > 0 and s.sleeve_income_cad > 0
+        assert broker.sleeve is None and broker.sleeve_trades == 0
+        assert s.trades == broker.trades  # the strategy's trades exclude the sleeve's
+        assert s.avg_gross_exposure == pytest.approx(broker.avg_gross_exposure, abs=0.01)
+
+    def test_kill_and_venue_fault_stop_sleeve_orders(
+        self, store: VersionedStore, tmp_path: Path
+    ) -> None:
+        safety = SafetyStore(tmp_path / "kill.sqlite")
+        safety.kill("drill", "tester", datetime(2024, 6, 1, tzinfo=timezone.utc))
+        res = backtest(store, safety, date(2024, 6, 3), date(2024, 8, 30), SLEEVE_CFG).run()
+        assert not res.ledger.trades
+        fault = SafetyStore(tmp_path / "fault.sqlite")
+        fault.set_venue_fault("drill", "tester", datetime(2024, 6, 1, tzinfo=timezone.utc))
+        res = backtest(store, fault, date(2024, 6, 3), date(2024, 8, 30), SLEEVE_CFG).run()
+        notes = [r["sleeve"]["note"] for r in res.records if r["kind"] == "decision"]
+        assert not res.ledger.trades and any("VENUE_FAULT" in n for n in notes)
+
+    def test_a_sleeve_data_fault_stops_sweeps_only(self, tmp_path: Path) -> None:
+        """No cross-check for the sleeve from February 2025: Q6 faults it, so no sweeps; funding
+        sales still go through."""
+
+        def drop_crosscheck(path: Path, rows: list[dict[str, str]]) -> bool:
+            if path.parent.parent.name != "crosscheck" or path.stem != DEMO_SLEEVE:
+                return False
+            rows[:] = [r for r in rows if r["session_date"] < "2025-02-01"]
+            return True
+
+        market = edit_fixtures(tmp_path, drop_crosscheck)
+        st = ingest_demo_fixtures(CFG, ROOT, tmp_path / "store", market)
+        res = backtest(st, SafetyStore(tmp_path / "s.sqlite"), date(2024, 6, 3), date(2025, 6, 30),
+                       SLEEVE_CFG).run()  # fmt: skip
+        late = [  # trades decided after the cross-check stopped
+            t
+            for t in res.ledger.trades
+            if t.symbol == DEMO_SLEEVE and t.decision_id > "D-2025-02-01"
+        ]
+        assert late and {t.side for t in late} == {"sell"}
+        notes = [r["sleeve"].get("note", "") for r in res.records
+                 if r["kind"] == "decision" and r["date"] >= date(2025, 2, 1)]  # fmt: skip
+        assert any("data fault" in n for n in notes)

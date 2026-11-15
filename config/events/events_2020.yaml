@@ -1,9 +1,12 @@
 # Official release times for the event gate (§8.4, v1.5), 2020.
 # Collected politely from the official sites by scripts/events/ (see source_url).
-# Only scheduled releases; unscheduled ones could not be known at the decision close.
+# Scheduled releases, plus unscheduled announcements kept for crisis replays.
 # time_assumed: true means only the date is published and the institution's standard
 # time is used (ECB 13:45 CET, 14:15 CET from 2022-07-21; SNB 09:30; BoJ 12:00 JST;
 # StatCan 08:30 ET).
+# unscheduled: true marks announcements not on the published calendar in advance; the
+# event gate ignores them (v1.7). rescheduled: true marks releases moved from their
+# published date (notice_url); the gate uses them only from announced_utc.
 events:
   - {type: CA_LFS, release_utc: '2020-01-10T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200110/dq200110a-eng.htm', retrieved_utc: '2026-11-12T22:15:00+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2020-01-10T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_01102020.htm', retrieved_utc: '2026-11-12T21:53:53+00:00', version: 1, time_assumed: false}
@@ -17,14 +20,22 @@ events:
   - {type: US_NFP, release_utc: '2020-02-07T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_02072020.htm', retrieved_utc: '2026-11-12T21:53:50+00:00', version: 1, time_assumed: false}
   - {type: US_CPI, release_utc: '2020-02-13T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_02132020.htm', retrieved_utc: '2026-11-12T21:48:35+00:00', version: 1, time_assumed: false}
   - {type: CA_CPI, release_utc: '2020-02-19T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200219/dq200219a-eng.htm', retrieved_utc: '2026-11-12T22:26:50+00:00', version: 1, time_assumed: true}
+  - {type: FOMC, release_utc: '2020-03-03T15:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20200303a.htm', retrieved_utc: '2026-11-15T00:27:18+00:00', version: 1, time_assumed: false, unscheduled: true}
   - {type: BOC, release_utc: '2020-03-04T15:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2020/03/fad-press-release-2020-03-04/', retrieved_utc: '2026-11-12T16:09:21+00:00', version: 1, time_assumed: false}
   - {type: CA_LFS, release_utc: '2020-03-06T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200306/dq200306a-eng.htm', retrieved_utc: '2026-11-12T22:15:55+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2020-03-06T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_03062020.htm', retrieved_utc: '2026-11-12T21:53:48+00:00', version: 1, time_assumed: false}
   - {type: US_CPI, release_utc: '2020-03-11T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_03112020.htm', retrieved_utc: '2026-11-12T21:48:33+00:00', version: 1, time_assumed: false}
   - {type: ECB, release_utc: '2020-03-12T12:45:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2020/html/ecb.mp200312~8d3aec3ff2.en.html', retrieved_utc: '2026-11-12T21:41:50+00:00', version: 1, time_assumed: true}
-  - {type: BOJ, release_utc: '2020-03-16T03:00:00+00:00', source_url: 'https://www.boj.or.jp/en/mopo/mpmdeci/state_2020/k200316b.pdf', retrieved_utc: '2026-11-12T15:52:55+00:00', version: 1, time_assumed: true}
+  - {type: BOC, release_utc: '2020-03-13T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2020/03/bank-of-canada-lowers-overnight-rate-target-to-%C2%BE-percent/', retrieved_utc: '2026-11-15T00:24:51+00:00', version: 1, time_assumed: true, unscheduled: true}
+  - {type: FOMC, release_utc: '2020-03-15T21:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm', retrieved_utc: '2026-11-12T15:53:38+00:00', version: 1, time_assumed: false, unscheduled: true}
+  - {type: BOJ, release_utc: '2020-03-16T03:00:00+00:00', source_url: 'https://www.boj.or.jp/en/mopo/mpmdeci/state_2020/k200316b.pdf', retrieved_utc: '2026-11-12T15:52:55+00:00', version: 1, time_assumed: true, unscheduled: true}
   - {type: CA_CPI, release_utc: '2020-03-18T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200318/dq200318a-eng.htm', retrieved_utc: '2026-11-12T22:26:53+00:00', version: 1, time_assumed: true}
+  - {type: ECB, release_utc: '2020-03-18T12:45:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2020/html/ecb.pr200318_1~3949d6f266.en.html', retrieved_utc: '2026-11-15T00:25:00+00:00', version: 1, time_assumed: true, unscheduled: true}
   - {type: SNB, release_utc: '2020-03-19T08:30:00+00:00', source_url: 'https://www.snb.ch/en/publications/communication/press-releases/2020/pre_20200319_2', retrieved_utc: '2026-11-12T21:42:47+00:00', version: 1, time_assumed: true}
+  - {type: FOMC, release_utc: '2020-03-23T12:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20200323a.htm', retrieved_utc: '2026-11-15T00:27:21+00:00', version: 1, time_assumed: false, unscheduled: true}
+  - {type: SNB, release_utc: '2020-03-25T08:30:00+00:00', source_url: 'https://www.snb.ch/en/publications/communication/press-releases/2020/pre_20200325', retrieved_utc: '2026-11-15T00:25:05+00:00', version: 1, time_assumed: true, unscheduled: true}
+  - {type: BOC, release_utc: '2020-03-27T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2020/03/press-release-2020-03-27/', retrieved_utc: '2026-11-15T00:27:28+00:00', version: 1, time_assumed: true, unscheduled: true}
+  - {type: FOMC, release_utc: '2020-03-31T12:30:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20200331a.htm', retrieved_utc: '2026-11-15T00:27:23+00:00', version: 1, time_assumed: false, unscheduled: true}
   - {type: US_NFP, release_utc: '2020-04-03T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_04032020.htm', retrieved_utc: '2026-11-12T21:53:46+00:00', version: 1, time_assumed: false}
   - {type: CA_LFS, release_utc: '2020-04-09T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200409/dq200409a-eng.htm', retrieved_utc: '2026-11-12T22:15:57+00:00', version: 1, time_assumed: true}
   - {type: US_CPI, release_utc: '2020-04-10T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_04102020.htm', retrieved_utc: '2026-11-12T21:48:30+00:00', version: 1, time_assumed: false}
@@ -35,8 +46,10 @@ events:
   - {type: ECB, release_utc: '2020-04-30T11:45:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2020/html/ecb.mp200430~1eaa128265.en.html', retrieved_utc: '2026-11-12T21:41:50+00:00', version: 1, time_assumed: true}
   - {type: CA_LFS, release_utc: '2020-05-08T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200508/dq200508a-eng.htm', retrieved_utc: '2026-11-12T22:16:00+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2020-05-08T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_05082020.htm', retrieved_utc: '2026-11-12T21:53:43+00:00', version: 1, time_assumed: false}
+  - {type: SNB, release_utc: '2020-05-11T07:30:00+00:00', source_url: 'https://www.snb.ch/en/publications/communication/press-releases/2020/pre_20200511', retrieved_utc: '2026-11-15T00:25:08+00:00', version: 1, time_assumed: true, unscheduled: true}
   - {type: US_CPI, release_utc: '2020-05-12T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_05122020.htm', retrieved_utc: '2026-11-12T21:48:28+00:00', version: 1, time_assumed: false}
   - {type: CA_CPI, release_utc: '2020-05-20T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200520/dq200520a-eng.htm', retrieved_utc: '2026-11-12T22:26:58+00:00', version: 1, time_assumed: true}
+  - {type: BOJ, release_utc: '2020-05-22T03:00:00+00:00', source_url: 'https://www.boj.or.jp/en/mopo/mpmdeci/mpr_2020/k200522b.pdf', retrieved_utc: '2026-11-12T15:52:55+00:00', version: 1, time_assumed: true, unscheduled: true}
   - {type: BOC, release_utc: '2020-06-03T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2020/06/fad-press-release-2020-06-03/', retrieved_utc: '2026-11-12T16:09:31+00:00', version: 1, time_assumed: false}
   - {type: ECB, release_utc: '2020-06-04T11:45:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2020/html/ecb.mp200604~a307d3429c.en.html', retrieved_utc: '2026-11-12T21:41:50+00:00', version: 1, time_assumed: true}
   - {type: CA_LFS, release_utc: '2020-06-05T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200605/dq200605a-eng.htm', retrieved_utc: '2026-11-12T22:16:02+00:00', version: 1, time_assumed: true}
@@ -58,6 +71,7 @@ events:
   - {type: US_NFP, release_utc: '2020-08-07T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_08072020.htm', retrieved_utc: '2026-11-12T21:53:36+00:00', version: 1, time_assumed: false}
   - {type: US_CPI, release_utc: '2020-08-12T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_08122020.htm', retrieved_utc: '2026-11-12T21:48:21+00:00', version: 1, time_assumed: false}
   - {type: CA_CPI, release_utc: '2020-08-19T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200819/dq200819b-eng.htm', retrieved_utc: '2026-11-12T22:27:09+00:00', version: 1, time_assumed: true}
+  - {type: FOMC, release_utc: '2020-08-27T13:10:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20200827a.htm', retrieved_utc: '2026-11-15T00:27:25+00:00', version: 1, time_assumed: false, unscheduled: true}
   - {type: CA_LFS, release_utc: '2020-09-04T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/200904/dq200904a-eng.htm', retrieved_utc: '2026-11-12T22:16:10+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2020-09-04T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_09042020.htm', retrieved_utc: '2026-11-12T21:53:34+00:00', version: 1, time_assumed: false}
   - {type: BOC, release_utc: '2020-09-09T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2020/09/fad-press-release-2020-09-09/', retrieved_utc: '2026-11-12T16:13:48+00:00', version: 1, time_assumed: false}

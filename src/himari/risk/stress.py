@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from himari.core.config import BondLoading, StressConfig
@@ -61,6 +61,21 @@ def joint_scenario(cfg: StressConfig, with_cad_up: bool = False) -> Scenario:
         moves["CAD_UP"] = cfg.factors["CAD_UP"].shock or 0.0
         return Scenario("all_adverse_including_cad_up", moves)
     return Scenario("joint", moves)
+
+
+def gains_in_loss_scenarios(cfg: StressConfig, symbols: Sequence[str]) -> dict[str, list[str]]:
+    """Scenario -> funds that gain while another fund loses in it.
+
+    Empty means no fund gains in a loss scenario, so cutting any weight can never raise a
+    scenario loss and the stress gate needs no second pass after later cuts (v1.7)."""
+    out: dict[str, list[str]] = {}
+    for sc in [*single_factor_scenarios(cfg), joint_scenario(cfg)]:
+        rets = {s: fund_return(cfg.loadings.get(s, {}), sc.moves) for s in symbols}
+        if any(r < 0 for r in rets.values()):
+            gainers = sorted(s for s, r in rets.items() if r > 0)
+            if gainers:
+                out[sc.name] = gainers
+    return out
 
 
 @dataclass(frozen=True)

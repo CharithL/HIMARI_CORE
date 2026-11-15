@@ -16,6 +16,8 @@ def test_demo_reports_and_logs_both_cost_runs(tmp_path: Path) -> None:
     result = runner.invoke(app, ["backtest", "--demo", "--quiet", "--state-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "1x costs: NAV" in result.output and "2x costs: NAV" in result.output
+    assert "1x costs, cash at the broker: NAV" in result.output  # v1.7: the labelled sensitivity
+    assert "  sleeve TBILL.SYN: average weight" in result.output
     (run,) = (tmp_path / "runs").iterdir()
     assert (run / "report.html").exists()
     for m in ("1x", "2x"):
@@ -24,9 +26,14 @@ def test_demo_reports_and_logs_both_cost_runs(tmp_path: Path) -> None:
     html = (run / "report.html").read_text(encoding="utf-8")
     assert "warm-up (excluded)" in html and "gates (scale)" in html
     with closing(sqlite3.connect(tmp_path / "trials.sqlite")) as con:
-        rows = con.execute("SELECT data_version, cost_multiplier FROM trials").fetchall()
-    assert [m for _, m in rows] == [1.0, 2.0]
-    assert all(v.startswith("fixtures:") for v, _ in rows)
+        rows = con.execute("SELECT data_version, cost_multiplier, notes FROM trials").fetchall()
+    # v1.7: the sleeve runs, then the cash-at-the-broker sensitivity, each logged (rule 6)
+    assert [m for _, m, _ in rows] == [1.0, 2.0, 1.0, 2.0]
+    assert all(v.startswith("fixtures:") for v, _, _ in rows)
+    sensitivity = ["sensitivity: cash at the broker" in n for _, _, n in rows]
+    assert sensitivity == [False, False, True, True]
+    assert (run / "1x-cash-at-the-broker" / "decisions.jsonl").exists()
+    assert "TBILL.SYN" in html and "Sleeve income (CAD)" in html
 
 
 def test_weekly_log_names_reasons(tmp_path: Path) -> None:

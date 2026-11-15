@@ -137,6 +137,30 @@ class StressConfig(BaseModel):
     diagnostic_all_adverse_including_fx: bool = True
 
 
+class CashSleeveConfig(BaseModel):
+    """Idle CAD cash in one CAD-listed T-bill or money-market ETF (§7.4, v1.7). Cash
+    management only: no signal, no risk budget, not part of w, not gated, left out of sigma_p
+    and the stress gate."""
+
+    enabled: bool = False
+    symbol: str | None = None  # null keeps idle cash at the broker
+    buffer_nav: float = 0.02
+    buffer_min_cad: float = 200.0
+    band_nav: float = 0.03
+    band_min_cad: float = 1000.0
+    duration_years: float | None = None  # the fund's duration, for the +50 bp diagnostic
+
+    @property
+    def active(self) -> bool:
+        return self.enabled and self.symbol is not None
+
+    def buffer(self, nav: float) -> float:
+        return max(self.buffer_nav * nav, self.buffer_min_cad)
+
+    def band(self, nav: float) -> float:
+        return max(self.band_nav * nav, self.band_min_cad)
+
+
 class AccountConfig(BaseModel):
     loss_floor_cad: float | None = None  # null allowed in backtest and paper; required live
     initial_nav_cad: float | None = None  # v1.6: planned account size; sets the interest tiers
@@ -231,6 +255,7 @@ class FrozenConfig(BaseModel):
     risk: RiskConfig
     rebalance: RebalanceConfig
     account: AccountConfig = Field(default_factory=AccountConfig)
+    cash_sleeve: CashSleeveConfig = Field(default_factory=CashSleeveConfig)
     drawdown: DrawdownConfig
     data_quality: DataQualityConfig
     sources: SourcesConfig

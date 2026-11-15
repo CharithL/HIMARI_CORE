@@ -9,8 +9,8 @@ setup:
 	$(UV) pip freeze > requirements-lock.txt
 
 lint:
-	ruff check src/ tests/
-	ruff format --check src/ tests/
+	ruff check src/ tests/ scripts/
+	ruff format --check src/ tests/ scripts/
 	mypy src/himari/core src/himari/risk src/himari/strategy src/himari/execution src/himari/data src/himari/accounting src/himari/quality src/himari/gates src/himari/sizing src/himari/sim src/himari/research
 
 test:

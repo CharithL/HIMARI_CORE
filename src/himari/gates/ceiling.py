@@ -24,14 +24,21 @@ def portfolio_vol(weights: Mapping[str, float], symbols: Sequence[str], cov: Flo
 
 
 def apply_vol_ceiling(
-    weights_in: Mapping[str, float], symbols: Sequence[str], cov: FloatArray, ceiling: float
+    weights_in: Mapping[str, float],
+    symbols: Sequence[str],
+    cov: FloatArray,
+    ceiling: float,
+    gate_name: str = "vol_ceiling",
 ) -> tuple[dict[str, float], GateLog]:
-    """If sigma_p exceeds the ceiling, scale every weight by ceiling / sigma_p."""
+    """If sigma_p exceeds the ceiling, scale every weight by ceiling / sigma_p.
+
+    Runs twice (v1.7): as gate 2, and again last (`final_ceiling`), because a later gate that
+    caps a negatively correlated fund at its holding can raise sigma_p."""
     vol = portfolio_vol(weights_in, symbols, cov)
     scale = ceiling / vol if vol > ceiling else 1.0
     out = {s: w * scale for s, w in weights_in.items()}
     log = GateLog(
-        gate_name="vol_ceiling",
+        gate_name=gate_name,
         weights_in=dict(weights_in),
         weights_out=out,
         bound=scale < 1.0,

@@ -1,9 +1,12 @@
 # Official release times for the event gate (§8.4, v1.5), 2019.
 # Collected politely from the official sites by scripts/events/ (see source_url).
-# Only scheduled releases; unscheduled ones could not be known at the decision close.
+# Scheduled releases, plus unscheduled announcements kept for crisis replays.
 # time_assumed: true means only the date is published and the institution's standard
 # time is used (ECB 13:45 CET, 14:15 CET from 2022-07-21; SNB 09:30; BoJ 12:00 JST;
 # StatCan 08:30 ET).
+# unscheduled: true marks announcements not on the published calendar in advance; the
+# event gate ignores them (v1.7). rescheduled: true marks releases moved from their
+# published date (notice_url); the gate uses them only from announced_utc.
 events:
   - {type: CA_LFS, release_utc: '2019-01-04T13:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/190104/dq190104a-eng.htm', retrieved_utc: '2026-11-12T22:13:40+00:00', version: 1, time_assumed: true}
   - {type: US_NFP, release_utc: '2019-01-04T13:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_01042019.htm', retrieved_utc: '2026-11-12T21:54:17+00:00', version: 1, time_assumed: false}
@@ -71,6 +74,7 @@ events:
   - {type: US_NFP, release_utc: '2019-10-04T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/empsit_10042019.htm', retrieved_utc: '2026-11-12T21:54:00+00:00', version: 1, time_assumed: false}
   - {type: US_CPI, release_utc: '2019-10-10T12:30:00+00:00', source_url: 'https://www.bls.gov/news.release/archives/cpi_10102019.htm', retrieved_utc: '2026-11-12T21:48:45+00:00', version: 1, time_assumed: false}
   - {type: CA_LFS, release_utc: '2019-10-11T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/191011/dq191011a-eng.htm', retrieved_utc: '2026-11-12T22:14:52+00:00', version: 1, time_assumed: true}
+  - {type: FOMC, release_utc: '2019-10-11T15:00:00+00:00', source_url: 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20191011a.htm', retrieved_utc: '2026-11-15T00:27:16+00:00', version: 1, time_assumed: false, unscheduled: true}
   - {type: CA_CPI, release_utc: '2019-10-16T12:30:00+00:00', source_url: 'https://www150.statcan.gc.ca/n1/daily-quotidien/191016/dq191016a-eng.htm', retrieved_utc: '2026-11-12T22:26:39+00:00', version: 1, time_assumed: true}
   - {type: ECB, release_utc: '2019-10-24T11:45:00+00:00', source_url: 'https://www.ecb.europa.eu/press/pr/date/2019/html/ecb.mp191024~438769bd4f.en.html', retrieved_utc: '2026-11-12T21:41:47+00:00', version: 1, time_assumed: true}
   - {type: BOC, release_utc: '2019-10-30T14:00:00+00:00', source_url: 'https://www.bankofcanada.ca/2019/10/fad-press-release-2019-10-30/', retrieved_utc: '2026-11-12T16:13:41+00:00', version: 1, time_assumed: false}

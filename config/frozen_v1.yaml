@@ -101,6 +101,15 @@ account:
   loss_floor_cad: null    # amendment v1.5: resume refused below this NAV; required before live
   initial_nav_cad: 100000 # amendment v1.6: placeholder for the planned account size; sets the interest tiers
 
+cash_sleeve:                # amendment v1.7 (section 7.4): idle CAD cash in one CAD-listed T-bill ETF
+  enabled: true
+  symbol: null              # the user picks the fund; null keeps idle cash at the broker
+  buffer_nav: 0.02          # buffer = max(0.02 x NAV, 200)
+  buffer_min_cad: 200
+  band_nav: 0.03            # band = max(0.03 x NAV, 1000)
+  band_min_cad: 1000
+  duration_years: null      # from the chosen fund's factsheet; for the +50 bp diagnostic
+
 drawdown:
   halve_at: -0.10
   suspend_at: -0.15

@@ -7,7 +7,7 @@ conversion is scaled by the run's multiplier (1x or 2x; pass or fail is decided 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +60,11 @@ class CostModel:
 
     def fx_cost(self, amount: float) -> float:
         return abs(amount) * self.fx_conversion_bps / 10_000 * self.multiplier
+
+    def with_symbol(self, symbol: str, half_spread_bps: float) -> CostModel:
+        """The same model with one more fund priced (the cash sleeve, v1.7): the same floor,
+        impact, commission and multiplier as the risk funds, no cheaper treatment."""
+        return replace(self, half_spread_bps={**self.half_spread_bps, symbol: half_spread_bps})
 
 
 def load_cost_model(

@@ -16,6 +16,7 @@ class AssetClass(str, enum.Enum):
     GOLD = "gold"
     COMMODITY = "commodity"
     CURRENCY = "currency"
+    CASH = "cash"  # v1.7: the cash sleeve (cash management, never a risk position)
 
 
 class Currency(str, enum.Enum):
