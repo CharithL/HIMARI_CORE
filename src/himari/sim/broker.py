@@ -68,6 +68,7 @@ class SimOrder:
     submitted: date
     attempts: int = 0
     status: str = "open"  # open | filled | expired | cancelled
+    delayed: int = 0  # sessions passed over by the delay variant (M5 robustness pack)
 
 
 @dataclass(frozen=True)
@@ -148,9 +149,15 @@ class SimBroker:
         stressed: Callable[[str, date], bool] = lambda symbol, day: False,
         fill_at: str = "close",
         last_buys: frozenset[str] = frozenset(),
+        delay_sessions: int = 0,
     ) -> None:
         if fill_at not in ("close", "open"):
             raise ValueError("fill_at must be 'close' or 'open'")
+        if delay_sessions < 0:
+            raise ValueError("delay_sessions cannot be negative")
+        # robustness pack (§12.3, v1.7): every order waits this many extra sessions of its
+        # fund's calendar before it can fill; never part of the baseline
+        self.delay_sessions = delay_sessions
         self.truth = truth
         self.costs = costs
         self.calendars = dict(calendars)
@@ -282,11 +289,14 @@ class SimBroker:
         self._corporate_actions(day, rep)
         self._pay(day, rep)
         self._run_queued_fx(day, rep)
-        due = [
-            o
-            for o in sorted(self._orders.values(), key=lambda o: (o.symbol, o.order_id))
-            if o.status == "open" and o.submitted < day and _is_session(o.calendar, day)
-        ]
+        due: list[SimOrder] = []
+        for o in sorted(self._orders.values(), key=lambda o: (o.symbol, o.order_id)):
+            if o.status != "open" or o.submitted >= day or not _is_session(o.calendar, day):
+                continue
+            if o.delayed < self.delay_sessions:  # the delay variant passes this session over
+                o.delayed += 1
+                continue
+            due.append(o)
         tradable: list[SimOrder] = []
         for o in due:
             bar = self.truth.bar(o.symbol, day)

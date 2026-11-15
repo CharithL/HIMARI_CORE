@@ -4,6 +4,63 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.8 — CBIL sleeve, approved statistics wording, real-data trial counts (2026-11-15, approved by the user)
+- A (§7.4): `cash_sleeve.symbol: CBIL` and `duration_years: 0.16` (CBIL's weighted average
+  duration on globalx.ca, as at 2026-10-31). CBIL is used from its inception (2023-04-12);
+  before that idle cash stays at the broker. `costs_v1.yaml` gains a CBIL half-spread
+  placeholder (the 10 bp floor binds, as for every fund) until the paper run measures it. The
+  M6 report's "synthetic, pre-inception" sleeve sensitivity (CORRA minus 0.11% a year from
+  2015) is guide text, built in M6. The fixture runs keep the synthetic TBILL.SYN; a test
+  checks that the frozen config, with no CBIL data, keeps cash at the broker.
+- B: approved wording replaces the "to confirm" markers for the sleeve diagnostic (§7.4),
+  unscheduled-event costs (§11), the bootstrap p-value with register thresholds on the point
+  estimate (§12.4), and the annualized excess return and ES (§12.2). Appendix F: MinTRL 10.83
+  years at a Sharpe of 0.5 (the test now expects 10.83, tolerance 0.02).
+- C: `TrialLedger.trial_count()` and `real_data_rows()`: DSR and PBO count only real-data
+  rows; fixture and demo rows (data version `fixtures:...`) stay in the ledger (tested). The VIU
+  price halving between March and July 2025 is the fixture's deliberate 2-for-1 split on
+  2025-06-16 (`SPLITS` in `make_market_fixtures.py`): the ledger booked 161 -> 322 shares and
+  VIU's weight runs on (6.51% -> 6.52%); a test now pins it.
+- E: `docs/m6_data_sources.md` compares EODHD, FMP and Alpha Vantage from their own pages
+  (price, history depth, limits, licence). None marks reinvested distributions, so Q10 stays.
+- Config hash changes from `de69ce67…` to `0f7fd7a1…`; the costs config gains CBIL.
+
+### M5 (part 2) — gate statistics, benchmarks, robustness pack, register, ledger PBO, research report (2026-11-15)
+- Gate statistics (§12.2): each gate's log entry records its weights at entry and exit;
+  `research.metrics.gate_statistics` gives decisions, binds and the average scale (gross weight
+  out over gross weight in) where the gate bound.
+- Benchmarks (§12.3): `BacktestSettings.benchmark` is `all_signals_on` (benchmark 2: the all-on
+  weights, everything else unchanged) or `equal_weight_timing` (benchmark 3: 1/8 times the
+  signal, only the data and fault gates, no daily safety or post-trade check; `run_gates(skip=)`
+  refuses to skip the data or fault gate). Both use the same ledger and cash handling, sleeve
+  included; benchmark 1 is the cash index.
+- Robustness pack (§12.3): `research/attribution.py`, per-fund daily P&L, with an identity test
+  (funds plus interest, USD cash revaluation and conversion costs equal the NAV change, to the
+  cent); `leave_one_instrument_out`; `leave_one_year_out` (part 1); the delay variant
+  (`BacktestSettings.delay_sessions`, `SimBroker(delay_sessions=)`: an order passes over its
+  fund's first session, which does not count as a fill attempt).
+- Trial ledger: an append-only `trial_returns` table (each trial's daily excess returns) and
+  `ledger_pbo`, PBO over the real-data trials at one cost multiplier on their common sessions.
+- Register (§12.5): `research/register.py` loads and checks `research/register.yaml` (1 to 10
+  tests, unique ids, dependencies on earlier tests only, Holm, `family_alpha` equal to
+  `research.holm_alpha`); status from real-data rows, with Holm once every endpoint is reached;
+  `himari register status`.
+- Research report: `research/report.py` and `himari report baseline --demo`, the research pack
+  on the fixtures (baseline 1x and 2x, cash at the broker, benchmarks 2 and 3, the delay
+  variant), with the baseline rows logged as `baseline` and the rest as `adhoc`. Without
+  `--demo` the command says the real-data report is M6.
+- Run-log golden re-pinned (`4f1efa7a…` to `68154cac…`): the gate entries carry their weights.
+- Fixture report (synthetic data): research gate FAIL at 2x (1.0 year of history, 1 annual
+  block, leaving PDBC's P&L out gives -0.32% a year, DSR below 0.95 at every N). Baseline 2x:
+  excess +2.56% a year, Sharpe 0.49, CER +2.14%. Benchmark 2 (all signals on) Sharpe 0.25;
+  benchmark 3 (equal-weight timing) 0.68; fills one session later 0.37 (-0.62% a year).
+- Implementation choices, to confirm (marked in the guide): the gate statistics' average scale
+  (§12.2); the definitions of benchmarks 2 and 3, the P&L attribution and the delay mechanics
+  (§12.3); DSR's V when the ledger has fewer than 2 real-data trials (§12.4); how the report
+  judges history, annual blocks, DSR and a negative leave-one-out row (§12.7). Still to confirm
+  from part 1: sample variances (ddof 1) with population skewness and kurtosis; PBO drops the
+  earliest T mod 16 sessions and ranks ordinally.
+
 ### M5 (part 1) — research statistics and return metrics (2026-11-15)
 - `research/stats.py` (§12.4): the paired stationary bootstrap (Politis-Romano; mean block 20,
   10,000 resamples, seed 20261111, drawn in fixed chunks of 250 so a p-value is reproducible;

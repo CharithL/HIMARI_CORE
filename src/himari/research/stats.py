@@ -5,9 +5,11 @@ Every function here is pure and deterministic: the bootstrap draws from numpy's 
 seeded with `research.seed`, in chunks of a fixed size (the draw order is part of the method),
 so the same inputs give the same p-value on every machine.
 
+Approved (v1.8): the bootstrap p-value is one-sided, for improvement against zero, from the
+centred distribution of the challenger-minus-baseline statistic, p = (1 + #{d* - d >= d}) /
+(B + 1); a register threshold such as "Sharpe difference >= 0.10" applies to the point estimate.
+
 Implementation choices, to confirm (M5):
-- the bootstrap p-value is one-sided, for improvement, from the centred distribution of the
-  challenger-minus-baseline statistic: p = (1 + #{d* - d >= d}) / (B + 1);
 - a per-period Sharpe ratio uses the sample standard deviation (ddof 1); skewness and ordinary
   kurtosis use population moments (ddof 0);
 - PBO drops the earliest T mod S sessions so the S blocks are equal, and ranks out-of-sample

@@ -587,6 +587,18 @@ def _asset(name: str) -> str:
     return (_ASSETS / name).read_text(encoding="utf-8")
 
 
+def page_css() -> str:
+    """The report stylesheet with both themes (shared with the M5 research report)."""
+    css = _asset("report.css")
+    css = css.replace("%LIGHT%", "".join(f"--s{i + 1}:{c};" for i, c in enumerate(SERIES_LIGHT)))
+    return css.replace("%DARK%", "".join(f"--s{i + 1}:{c};" for i, c in enumerate(SERIES_DARK)))
+
+
+def table_html(head: Sequence[str], rows: Sequence[Sequence[str]], left: int = 1) -> str:
+    """A table (shared with the M5 research report); the first `left` columns are text."""
+    return _table(head, rows, left)
+
+
 def _table(head: Sequence[str], rows: Sequence[Sequence[str]], left: int = 1) -> str:
     """A table; the first `left` columns are left-aligned text, the rest numbers."""
 
@@ -637,9 +649,7 @@ def html_report(
     m0 = sums[0].metric_start
     warm_nav, warm_w = bisect.bisect_left(days, m0), bisect.bisect_left(wdays, m0)
 
-    css = _asset("report.css")
-    css = css.replace("%LIGHT%", "".join(f"--s{i + 1}:{c};" for i, c in enumerate(SERIES_LIGHT)))
-    css = css.replace("%DARK%", "".join(f"--s{i + 1}:{c};" for i, c in enumerate(SERIES_DARK)))
+    css = page_css()
     sub = (
         f"{sums[0].start} to {sums[0].end} · {data_label} · commissions: {commission_label} · "
         f"initial NAV {_cad(initial)} CAD · metrics from {m0} (the warm-up before the first "

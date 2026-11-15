@@ -2,13 +2,13 @@
 less the cash index's (§5.6), over the measured sessions (warm-up excluded, §12.2 v1.6), at 1x
 and 2x costs. Pure functions over aligned NAV and cash-index levels.
 
+Approved (v1.8): r_ex is the strategy's daily return less the cash index's; the annualized
+excess return is 252 x mean(r_ex), which the research gate's "net excess return" and the
+leave-one-out rows use; 97.5% ES is the mean of the worst ceil(0.025 x T) daily losses (-r_ex),
+reported as a positive loss.
+
 Implementation choices, to confirm (M5):
-- r_ex is the arithmetic difference of the daily simple returns;
-- the annualized excess return is 252 x mean(r_ex), the same term as in the CER, and is what
-  the research gate's "net excess return" and the leave-one-out rows use; the annualized NAV
-  return is geometric;
-- 97.5% ES is the mean of the worst ceil(2.5% x T) daily losses (-r_ex), reported as a positive
-  loss;
+- the annualized NAV return is geometric;
 - variances and standard deviations are sample ones (ddof 1);
 - the longest time underwater counts sessions from a NAV peak until NAV is back at or above it
   (to the end of the window if it never recovers).
@@ -149,6 +149,41 @@ def backtest_metrics(
     """§12.2 return metrics of a backtest over its measured sessions."""
     _, nav, cash = measured_series(res)
     return return_metrics(nav, cash, periods_per_year, research.risk_aversion, research.es_level)
+
+
+@dataclass(frozen=True)
+class GateStats:
+    decisions: int  # measured decisions at which the gate ran
+    binds: int  # decisions at which it cut a weight
+    avg_scale: float | None  # mean of gross weight out / gross weight in where it bound
+
+
+def gate_statistics(res: BacktestResult) -> dict[str, GateStats]:
+    """§12.2 gate statistics over the measured decisions: how often each gate binds and the
+    average scale it applies, as the gross weight leaving it over the gross weight entering it
+    (the gate log's weights at entry and exit, M5)."""
+    from himari.sim.report import metric_start
+
+    m0 = metric_start(res)
+    seen: dict[str, list[int]] = {}
+    scales: dict[str, list[float]] = {}
+    for r in res.records:
+        day = r["date"] if isinstance(r["date"], date) else date.fromisoformat(r["date"])
+        if r["kind"] != "decision" or day < m0:
+            continue
+        for g in r["gates"]:
+            counts = seen.setdefault(g["gate"], [0, 0])
+            counts[0] += 1
+            if not g["bound"]:
+                continue
+            counts[1] += 1
+            gross_in = sum(g["weights_in"].values())
+            if gross_in > 0:
+                scales.setdefault(g["gate"], []).append(sum(g["weights_out"].values()) / gross_in)
+    return {
+        name: GateStats(c[0], c[1], float(np.mean(scales[name])) if scales.get(name) else None)
+        for name, c in seen.items()
+    }
 
 
 def leave_one_year_out(

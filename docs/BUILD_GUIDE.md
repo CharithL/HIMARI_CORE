@@ -1,7 +1,7 @@
 # HIMARI Core: Build Guide for Claude Code
 
 Version 1.0, 11 November 2026. Design frozen as `frozen_v1`.
-Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6), v1.4 (12 November 2026: §7.3 order and common scale), v1.5 (12 November 2026: resume, loss floor, event archive, kill switch, M4 demo), v1.6 (13 November 2026: band and post-trade check, order reasons, cash interest, warm-up, reinvested distributions) and v1.7 (14 November 2026: approved readings, final ceiling, known-in-advance events, cash sleeve, robustness pack, crypto comparator text), marked *(v1.1)* to *(v1.7)*. Log in Appendix G. v1.2 adds `data_quality.fx_bridge_max_calendar_days`, v1.5 `account.loss_floor_cad`, v1.6 `rebalance.gate_tolerance_rel` and `account.initial_nav_cad`, and v1.7 the `cash_sleeve` block. v1.6 and v1.7 amend frozen rules (§9.2; §8.1, §8.4 and the new §7.4); no existing parameter value changed.
+Amendments v1.1 to v1.3 (11 November 2026: data-layer clarifications in §5.2 to §5.5 and §6), v1.4 (12 November 2026: §7.3 order and common scale), v1.5 (12 November 2026: resume, loss floor, event archive, kill switch, M4 demo), v1.6 (13 November 2026: band and post-trade check, order reasons, cash interest, warm-up, reinvested distributions) v1.7 (14 November 2026: approved readings, final ceiling, known-in-advance events, cash sleeve, robustness pack, crypto comparator text) and v1.8 (15 November 2026: CBIL as the cash sleeve, approved statistics wording, real-data trial counts, Appendix F MinTRL), marked *(v1.1)* to *(v1.8)*. Log in Appendix G. v1.2 adds `data_quality.fx_bridge_max_calendar_days`, v1.5 `account.loss_floor_cad`, v1.6 `rebalance.gate_tolerance_rel` and `account.initial_nav_cad`, and v1.7 the `cash_sleeve` block; v1.8 sets `cash_sleeve.symbol` and `duration_years`, both null placeholders before. v1.6 and v1.7 amend frozen rules (§9.2; §8.1, §8.4 and the new §7.4).
 
 > **For Claude Code:** read this whole file before writing any code. Build the milestones in §16 in order. The ground rules in §2 override everything else in this file. If anything here conflicts with a market fact you verify (a contract spec, a fee, a calendar, a series code), stop and ask the user. Do not guess, and never change a frozen parameter to make a result look better.
 
@@ -267,7 +267,7 @@ The result is often below the 8% ceiling because caps bind. That is by design: n
 
 Idle CAD cash is held in one CAD-listed T-bill or money-market ETF (`cash_sleeve.symbol`). It is cash management only: no signal, no risk budget, not part of `w`, not scaled by any gate, and left out of `σ_p` and the stress gate. In rule 5, "cash" means broker cash plus the sleeve. NAV includes the sleeve; risk weights are computed over the eight funds only.
 
-- **Config** (`frozen_v1.yaml`, Appendix B): `cash_sleeve: {enabled: true, symbol: null, buffer_nav: 0.02, buffer_min_cad: 200, band_nav: 0.03, band_min_cad: 1000}`. The sleeve runs only when it is enabled and has a symbol; while `symbol` is null, idle cash stays at the broker. The user picks the fund (candidates checked on the issuers' sites: `docs/cash_sleeve_candidates.md`).
+- **Config** (`frozen_v1.yaml`, Appendix B): `cash_sleeve: {enabled: true, symbol: null, buffer_nav: 0.02, buffer_min_cad: 200, band_nav: 0.03, band_min_cad: 1000}`. The sleeve runs only when it is enabled and has a symbol; while `symbol` is null, idle cash stays at the broker. *(v1.8)* The fund is **CBIL** (Global X 0-3 Month T-Bill ETF, Government of Canada T-bills), chosen by the user from the candidates in `docs/cash_sleeve_candidates.md`: `symbol: CBIL`, `duration_years: 0.16` (weighted average duration on the issuer's page, as at 31 October 2026).
 - **Weekly rule**, after the risk order plan is built (§9.1). `C` is the CAD cash expected after that plan: its buys and sells at their reference prices moved by the cost model, commissions, the CAD spent funding USD buys (with the 1% buffer) and any USD surplus converted back. `buffer = max(0.02 × NAV, 200)` and `band = max(0.03 × NAV, 1000)`:
 
   | Condition | Order | Reason | Shares |
@@ -276,10 +276,10 @@ Idle CAD cash is held in one CAD-listed T-bill or money-market ETF (`cash_sleeve
   | `C > buffer + band` | buy sleeve with `C - buffer` | `sleeve_sweep` | rounded down, costs included |
   | otherwise | no sleeve order | | |
 
-- **Execution:** same session and same cost model as the risk orders, with no cheaper treatment: the sleeve's half spread is measured like any fund's (§11), and a run refuses to start without one. Backtest: the session's sales are applied before its buys, and the sleeve buy fills after the risk buys. Paper and live: sales first, buys as cash becomes available; if cash can't cover a buy by the cancel time, the buys are cut pro rata and logged. CAD and USD cash never go negative.
+- **Execution:** same session and same cost model as the risk orders, with no cheaper treatment: the sleeve's half spread is measured like any fund's (§11), and a run refuses to start without one. Backtest: the session's sales are applied before its buys, and the sleeve buy fills after the risk buys. Paper and live: sales first, buys as cash becomes available; if cash can't cover a buy by the cancel time, the buys are cut pro rata and logged. CAD and USD cash never go negative. *(v1.8)* The sleeve keeps the risk orders' cost model, 10 bp per-side floor included; CBIL's half spread in `costs_v1.yaml` is a placeholder (the floor binds) until the paper run measures it.
 - **States:** `KILL` and `VENUE_FAULT` stop all sleeve orders. A data fault on the sleeve stops sleeve buys only. HALVED and SUSPENDED don't affect it.
-- **Inception:** the sleeve is used only from the fund's own inception; before that, cash stays at the broker. No proxy in the baseline.
-- **Diagnostic:** each decision logs the sleeve's loss under the +50 bp yield shock (§8.5). It is not a gate. *To confirm:* the loss, as a share of NAV, is the sleeve's weight × `duration_years` × 0.005, with `cash_sleeve.duration_years` taken from the chosen fund's factsheet (null until then, and no diagnostic).
+- **Inception:** the sleeve is used only from the fund's own inception; before that, cash stays at the broker. No proxy in the baseline. *(v1.8)* For CBIL that is 12 April 2023. The M6 baseline report adds one sensitivity labelled "synthetic, pre-inception" (§12.1): a sleeve fund returning CORRA minus 0.11% a year from 2015, traded with the same rules and costs.
+- **Diagnostic:** each decision logs the sleeve's loss under the +50 bp yield shock (§8.5). It is not a gate. *(v1.8)* The loss, as a share of NAV, is the sleeve's weight × `duration_years` × 0.5%, with `cash_sleeve.duration_years` from the fund's factsheet.
 - **Reports:** gross exposure, time in market and strategy turnover exclude the sleeve; sleeve turnover, costs, income and trades get their own lines; every §12.3 benchmark uses the same cash handling. With the sleeve on, it is the baseline of record, and "cash at the broker" (the same run with the sleeve off) is a labelled sensitivity.
 
 ---
@@ -528,7 +528,7 @@ Rules:
 
 - **ETF cost per side** = `max(10 bp, half_spread + 1 bp)` plus the broker commission. Use half-spreads measured from 60 normal sessions of quotes; the config holds placeholders until then.
 - **Currency conversion:** the broker's actual cost (placeholder 5 bp). Never assume a zero FX fee.
-- **Stress sessions** (event windows and crises in replays): spreads × 5. *(v1.7, to confirm)* Every archived event marks its funds' execution session as stressed, unscheduled ones included: that only raises costs and never changes a decision, so it uses no look-ahead.
+- **Stress sessions** (event windows and crises in replays): spreads × 5. *(v1.8)* Unscheduled events widen execution costs in crisis replays like any archived event: costs only, never decisions, so no look-ahead.
 - **Futures (Stage 2):** US$1.50 per contract per side plus 1 tick of slippage (MTN: 2 ticks). Micro FX: US$1.00 per contract plus 1 tick.
 - **Crypto:** taker fee (placeholder 40 bp) plus the half-spread, with a minimum of 5 bp.
 - Every research run is done at 1× and 2× costs. Pass or fail is decided at **2×**.
@@ -549,11 +549,11 @@ Rules:
 
 Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs.
 
-- Annualized return, volatility and Sharpe: `mean(r_ex) / std(r_ex) * sqrt(252)`.
+- Annualized return, volatility and Sharpe: `mean(r_ex) / std(r_ex) * sqrt(252)`. *(v1.8)* The daily excess return is the strategy's daily return less the cash index's; the annualized excess return is `252 * mean(r_ex)`.
 - Maximum drawdown, longest time underwater, turnover (one-way, as a fraction of NAV per year), and time in market.
-- **97.5% expected shortfall:** the mean of daily losses beyond the 97.5% quantile.
+- **97.5% expected shortfall:** the mean of daily losses beyond the 97.5% quantile. *(v1.8)* That is the mean of the worst `ceil(0.025 * T)` daily losses.
 - **Certainty-equivalent return:** `CER = 252 * mean(r_ex) - (3/2) * 252 * var(r_ex)`, with risk aversion 3.
-- Gate statistics: how often each gate binds, and the average scale it applies.
+- Gate statistics: how often each gate binds, and the average scale it applies. *(M5, to confirm)* Each gate's log records its weights at entry and exit; the average scale is the gross weight leaving the gate over the gross weight entering it, at the decisions where it bound.
 - *(v1.6)* Average gross exposure (the mean of `sum(|w_i|)` over the measured sessions).
 - *(v1.7)* Gross exposure, time in market and strategy turnover exclude the cash sleeve (§7.4); sleeve turnover, costs and income are reported on their own lines.
 - *(v1.6)* **Warm-up excluded.** Metrics start at the later of the window start and the first weekly decision with at least one valid signal (*(v1.7)* a valid signal is any computed signal, on or off). Before that the portfolio cannot hold anything, so its all-cash sessions would dilute return, turnover and time in market. Charts shade the warm-up and reports state where measurement starts.
@@ -566,13 +566,16 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
 
 *(v1.6)* Benchmarks 2 and 3 run through the same ledger, so their idle cash earns interest under the same cash model (§9.4). *(v1.7)* Every benchmark uses the same cash handling as the baseline, the cash sleeve included (§7.4).
 
+*(M5, to confirm)* Benchmark 2 is the strategy with every signal on and nothing else changed: the same gates, band, daily safety check and post-trade check. Benchmark 3 targets `1/8` for each eligible fund whose signal is on and keeps only the data and fault gates: no caps, no volatility ceiling, daily safety check or post-trade check, and no event, stress or drawdown gate. For example, with every signal on it holds 50% in the four equity funds (the strategy's equity cap is 40%), and the stress gate would otherwise scale it by 0.8 (CAD +5% on 75% foreign exposure).
+
 *(v1.7)* **Robustness pack** (M5). Reported with the baseline, labelled, and never used to choose anything; each run is logged as `adhoc` in the trial ledger (§12.6).
 - **Leave-one-out:** the 2× net excess return with each calendar year removed, and with each instrument's P&L removed. This is how the research gate's "no dependence on a single crisis or a single instrument" (§12.7) is judged: every row must stay positive.
 - **Delay:** every fill one session later.
+- *(M5, to confirm)* A fund's daily P&L is its market-value change, the cash its fills moved (commissions included), its distributions booked that session, cash in lieu from its splits, and the revaluation of its unpaid USD distributions, all in CAD at the Bank of Canada rate. Leaving an instrument out subtracts its P&L over the previous NAV from each day's excess return. A test checks that every fund's P&L plus interest, USD cash revaluation and conversion costs equals the NAV change. The delay variant makes each order pass over its fund's first session after the decision.
 
 ### 12.4 Statistics
 
-- **Paired stationary bootstrap** (Politis–Romano): mean block length 20 sessions, 10,000 resamples, seed 20261111. Baseline and challenger use the same resampled indices. P-values are one-sided, for improvement.
+- **Paired stationary bootstrap** (Politis–Romano): mean block length 20 sessions, 10,000 resamples, seed 20261111. Baseline and challenger use the same resampled indices. P-values are one-sided, for improvement. *(v1.8)* `p = (1 + #{d* - d >= d}) / (B + 1)` from the centred paired bootstrap (`d` is the challenger-minus-baseline statistic, `d*` its value on a resample): one-sided, for improvement against zero. A register threshold such as "Sharpe difference >= 0.10" applies to the point estimate.
 - **Holm correction** across the register family at α = 0.05. Sort the p-values in ascending order and reject `p_(k)` while `p_(k) <= α / (m - k + 1)`; stop at the first failure.
 - **Probabilistic Sharpe ratio** (per-period Sharpe `SR`, skewness `γ3`, ordinary kurtosis `γ4`, `T` observations):
   ```
@@ -582,7 +585,7 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
   ```
   SR0* = sqrt(V) * ( (1 - γ) * Φ^-1(1 - 1/N) + γ * Φ^-1(1 - 1/(N*e)) ),   γ = 0.5772156649
   ```
-  `N` is the number of trials and `V` the variance of their per-period Sharpe ratios. `N` counts every row in the trial ledger **plus the old alpha factory's trials**. That count is unknown, so report DSR for N = 10, 100, 1,000 and 10,000, and state the caveat.
+  `N` is the number of trials and `V` the variance of their per-period Sharpe ratios. `N` counts every row in the trial ledger **plus the old alpha factory's trials**. That count is unknown, so report DSR for N = 10, 100, 1,000 and 10,000, and state the caveat. *(v1.8)* DSR and PBO count only ledger rows run on real market data; fixture and demo runs (data version `fixtures:...`) stay in the ledger but are excluded from the count. *(M5, to confirm)* `V` is the variance of the real-data trials' per-period Sharpe ratios when the ledger holds at least 2 with returns, and otherwise `1 / (T - 1)`, the variance of an unskilled trial's Sharpe estimate.
 - **Minimum track record length (in periods):**
   ```
   MinTRL = 1 + (1 - γ3*SR + (γ4 - 1)/4 * SR^2) * (Φ^-1(1 - α) / (SR - SR*))^2
@@ -601,16 +604,17 @@ Every metric is computed on daily CAD excess returns `r_ex` at 1× and 2× costs
 
 Columns: `trial_id`, `hypothesis_id` (or `baseline` or `adhoc`), `utc`, `git_commit`, `code_hash`, `config_hash`, `data_version`, `cost_multiplier`, `window`, `metrics_json`, `p_value`, `result`, `notes`.
 
-Every run is appended, failures and ad-hoc explorations included. Rows are never updated or deleted. The DSR trial count comes from this table.
+Every run is appended, failures and ad-hoc explorations included. Rows are never updated or deleted. The DSR trial count comes from this table. *(v1.8)* Only real-data rows count (§12.4). *(M5)* Each row's daily excess returns go in an append-only `trial_returns` table (`trial_id`, `day`, `r_ex`), which PBO reads.
 
 ### 12.7 Promotion gates
 
 **Research gate** (baseline, and any challenger claimed as better), all at 2× costs:
 - positive net excess return and positive CER
 - at least 5 years of common tradable history and at least 3 non-overlapping annual out-of-sample blocks
-- no dependence on a single crisis or a single instrument (*(v1.7)* judged by the leave-one-out rows of the robustness pack, §12.3: every row positive)
+- no dependence on a single crisis or a single instrument (*(v1.7)* judged by the leave-one-out rows of the robustness pack, §12.3: every row positive; *(M5, to confirm)* a negative row fails even when another row cannot be computed)
 - Holm pass for challengers
 - DSR ≥ 0.95, with the trial-count caveat, and MinTRL reported
+- *(M5, to confirm)* How the report judges these: common tradable history is measured sessions / 252; an annual block is a calendar year with at least 240 measured sessions; "DSR ≥ 0.95" passes when it holds at every reported N and fails when it holds at none, and otherwise depends on N and is not judged.
 
 **Operational gate** (shadow run):
 - at least 90 calendar days, 63 sessions and 13 weekly decisions
@@ -698,6 +702,7 @@ himari register run H1                # runs one registered test, appends to the
 himari register status
 himari shadow run --broker quote_paper|ibkr_paper [--crypto]
 himari report weekly|baseline|register
+himari report baseline --demo         # M5: the research report on the fixture set
 himari dashboard
 himari kill --reason "..." | himari unkill --reason "..."
 himari resume --reason "..."
@@ -723,7 +728,7 @@ IB Gateway must be running and logged in to the paper account. If the user autom
 | M3 | Gates and state machine: ceiling, daily check, events, stress, drawdown, faults, kill | Cut-only property test; stress goldens; persistence tests |
 | M4 | Simulator: clocks, data, `SimBroker`, cost model, ledger, weekly loop, band, reconciliation | No-look-ahead and determinism tests; 1× and 2× runs on fixtures. *(v1.5)* `himari backtest --demo` runs the fixture data, prints a weekly log (signals, gates that bound and why, orders, fills, costs, NAV) and writes a one-page HTML report (NAV vs cash, weights over time, trade list) |
 | M5 | Research engine: metrics, CER, ES, bootstrap, Holm, PSR/DSR/MinTRL, PBO, trial ledger, register loader, reports. *(v1.7)* The robustness pack (§12.3) | Golden tests (Appendix F); reports render |
-| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks. *(v1.6)* Before real data: every December distribution in the history confirmed (Q10); the event archive holds all nine §8.4 types for 2015–2025; `tests/fixtures/commissions_demo.yaml` replaced by the IBKR schedule; the `cash_interest` placeholders verified on IBKR's interest-rate page. *(v1.7)* The user picks the cash-sleeve fund and its half spread is measured; the IBKR pricing plan and the account size are asked again (`account.initial_nav_cad` stays at the 100,000 placeholder until then) | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
+| M6 | **Baseline study** on real data (user's PC): 2015–2025, 1× and 2×, against the three benchmarks. *(v1.6)* Before real data: every December distribution in the history confirmed (Q10); the event archive holds all nine §8.4 types for 2015–2025; `tests/fixtures/commissions_demo.yaml` replaced by the IBKR schedule; the `cash_interest` placeholders verified on IBKR's interest-rate page. *(v1.7)* The user picks the cash-sleeve fund and its half spread is measured; the IBKR pricing plan and the account size are asked again (`account.initial_nav_cad` stays at the 100,000 placeholder until then). *(v1.8)* The fund is CBIL (its spread is measured in the paper run); the report adds the "synthetic, pre-inception" sleeve sensitivity (§7.4); the user picks the end-of-day vendor from `docs/m6_data_sources.md` and then gives the IBKR pricing plan and the account size; every fund's coverage from its inception is checked on the vendor's key | Report written and trial logged. **No parameter changes after seeing it.** If it fails the research gate, stop and tell the user |
 | M7 | **Paper trading and shadow run:** live clock and quotes (IBKR), `QuotePaperBroker`, `IBKRPaperBroker`, dashboard, alerts, scheduler, kill switch. *(v1.7)* Before M7: whether a Canadian cash account can buy with same-day sale proceeds (§9.3), and how broker-credited interest and distributions are matched against the modelled amounts (§9.4) | One week of dry runs; then the 90-day shadow run starts, with the operational checklist tracked automatically |
 | M8 | Register tests in order (H1, H2, …) on historical data while the shadow run continues | Each test logged; Holm applied once the family's endpoints are reached |
 | M9 | Crypto comparator (simulation only). *(v1.7)* To be replaced by the user's Crypto Lab guide; build nothing for crypto until then | Runs alongside without touching the Stage 1 ledgers; separate report |
@@ -794,7 +799,7 @@ Each of these is excluded from the core:
 | Needed for | Item |
 |---|---|
 | M1 | Choice of end-of-day vendor and its API key, and permission for network access on the user's PC |
-| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports. *(v1.6)* The account size goes in `account.initial_nav_cad` (it sets the interest tiers); the IBKR pricing plan and its commission schedule; the cash/reinvested split of every December distribution, from the issuers' announcements. *(v1.7)* The cash-sleeve fund (`cash_sleeve.symbol`), from `docs/cash_sleeve_candidates.md` |
+| M6 | Account size and acceptable loss budget, which set the CAD numbers in reports. *(v1.6)* The account size goes in `account.initial_nav_cad` (it sets the interest tiers); the IBKR pricing plan and its commission schedule; the cash/reinvested split of every December distribution, from the issuers' announcements. *(v1.7)* The cash-sleeve fund (`cash_sleeve.symbol`), from `docs/cash_sleeve_candidates.md` (*(v1.8)* CBIL). *(v1.8)* The end-of-day vendor, from `docs/m6_data_sources.md` |
 | M7 | IBKR account with a paper login; market-data subscriptions shared with the paper account; IB Gateway or TWS installed |
 | Promotion | Canadian tax advice on account type and withholding; a signed promotion record |
 | DSR | The best available estimate of how many strategies the old Explorer tested (it may be unknown) |
@@ -939,12 +944,12 @@ account:
 
 cash_sleeve:                # amendment v1.7 (section 7.4): idle CAD cash in one CAD-listed T-bill ETF
   enabled: true
-  symbol: null              # the user picks the fund; null keeps idle cash at the broker
+  symbol: CBIL              # amendment v1.8: Global X 0-3 Month T-Bill ETF (TSX), from its inception (2023-04-12)
   buffer_nav: 0.02          # buffer = max(0.02 x NAV, 200)
   buffer_min_cad: 200
   band_nav: 0.03            # band = max(0.03 x NAV, 1000)
   band_min_cad: 1000
-  duration_years: null      # from the chosen fund's factsheet; for the +50 bp diagnostic
+  duration_years: 0.16      # amendment v1.8: CBIL weighted average duration, issuer page, as at 2026-10-31
 
 drawdown:
   halve_at: -0.10
@@ -1021,7 +1026,8 @@ etf:
   per_side_floor_bps: 10
   impact_bps: 1
   half_spread_bps:            # placeholder: replace with medians measured over 60 normal sessions
-    {VCN: 3, VUN: 3, VIU: 5, VEE: 5, VGV: 3, CGL.C: 5, PDBC: 5, DLR: 3}
+    {VCN: 3, VUN: 3, VIU: 5, VEE: 5, VGV: 3, CGL.C: 5, PDBC: 5, DLR: 3,
+     CBIL: 1}                 # v1.8 cash sleeve: placeholder, measured in the paper run; the 10 bp floor binds
   commission: broker_schedule # load the current IBKR Canada schedule; never assume zero
   participation_cap: 0.005
   carry_forward_sessions: 3
@@ -1180,7 +1186,7 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 - **Stress example 2:** weights VCN/VUN/VIU/VEE 0.055 each, VGV 0.229, CGL.C 0.229, PDBC 0.183, DLR 0.138.
   - Worst single-factor loss 0.035750 (CAD +5%), joint loss 0.060407, so scale = 0.827717.
   - After scaling: worst single-factor 0.029591 and joint 0.050000.
-- **MinTRL** (normal returns, one-sided 95%, `SR* = 0`): about 10.82 years at an annual Sharpe of 0.5 and about 2.71 years at 1.0.
+- **MinTRL** (normal returns, one-sided 95%, `SR* = 0`): ~~about 10.82 years~~ *(v1.8)* 10.83 years at an annual Sharpe of 0.5 with the full formula on daily data (10.82 is the leading term `(z / SR)^2`), and about 2.71 years at 1.0. Tests allow ±0.02 years.
 - **PSR property tests:** `PSR(SR*) = 0.5` when `SR = SR*`. DSR falls as `N` rises, other things equal.
 
 ---
@@ -1196,3 +1202,4 @@ Repos: `github.com/CharithL/<name>`. Several are private; ask the user for acces
 | v1.5 | 12 November 2026 | User | §8.6: `resume` resets the drawdown reference to the current NAV (old HWM kept in the record) and is refused below the new `account.loss_floor_cad` (null allowed in backtest and paper, required before live). §8.4: event archive collected from the official sites, times as published, `time_assumed` when only the date is published, missing types named in reports. §8.7: KILL sends no orders, cuts included, and from M7 cancels open broker orders; signed record = hash chain + OS user + UTC time, verified at startup. §16: M4 adds `himari backtest --demo`. Config hash changes. |
 | v1.6 | 13 November 2026 | User | Amends a frozen rule. §9.2: band exceptions are full exits, daily safety cuts and the cut on entering HALVED; other gate cuts follow the band; a post-trade check shrinks this decision's buys pro rata, then trades every fund to its gated target, when `σ_p` or a stress loss exceeds its limit by more than `rebalance.gate_tolerance_rel` (0.10). §9.3: every order records its reason and the gates that cut it, with their scales. §9.4: interest on settled cash per `costs_v1.yaml` `cash_interest` (placeholders) and `settlement_days`, posted monthly; `account.initial_nav_cad` (placeholder 100,000) sets the tiers; an alert for a distribution unpaid 30 days after its ex-date. §12.2: the warm-up before the first valid signal is excluded from metrics and shaded on charts; average gross exposure reported. §12.3: benchmarks use the same cash model. §5.5 and §6: action type `reinvested` (`D_t = 0`), check Q10 with `ACTION_UNCONFIRMED`, confirmations name their check. §16 M6 and §20: prerequisites before real data. New keys `rebalance.gate_tolerance_rel` and `account.initial_nav_cad` (frozen config hash `b7563f9b…`), `cash_interest` and `settlement_days` (costs config). Implementation choices marked "to confirm" in §9.2, §9.3, §9.4 and §12.2 are not part of the approval. |
 | v1.7 | 14 November 2026 | User | Amends frozen rules. §9.2, §9.3, §9.4, §12.2: the seven v1.6 readings approved as worded (entering HALVED; a shrunk buy keeps `band` and lists `post_trade_buys`; USD funding covers the commission; interest at the previous session's CORRA, calendar days / 365, posted on the next month's first session; settlement days on the exchange calendar, with distributions, interest and FX conversions settled when credited; the cost multiplier never scales interest; a valid signal is any computed signal); no special case for gate cuts. §8.1, §8.2: a final ceiling re-check as the last gate, with a property test and a config guard (no fund gains in a loss scenario). §8.4: the event gate uses only releases on the published calendar before the decision close; unscheduled announcements are archived with `unscheduled: true` and ignored; rescheduled releases keep their actual date, flagged `rescheduled: true`, and count from `announced_utc`. §7.4 (new), §2 rule 5, §9.1: the cash sleeve, with the new `cash_sleeve` block in `frozen_v1.yaml` (frozen config hash `de69ce67…`). §12.3, §12.7: the M5 robustness pack (leave-one-out by year and by instrument at 2×, every row positive; fills one session later; logged `adhoc`). §10.7: crypto comparator text for M9 (nothing built). §9.3, §9.4, §16: questions to settle before M7. §14: `scripts/` linted. Not part of the approval (marked "to confirm"): `cash_sleeve.duration_years` and the sleeve diagnostic formula (§7.4); unscheduled events still stress execution costs (§11). |
+| v1.8 | 15 November 2026 | User | §7.4: the cash sleeve is CBIL (`cash_sleeve.symbol: CBIL`, `duration_years: 0.16` from the issuer's page as at 31 October 2026), used from its inception (12 April 2023), with the same cost model as risk orders (10 bp floor; CBIL's half spread is a placeholder until the paper run measures it); the M6 report adds a "synthetic, pre-inception" sleeve sensitivity (CORRA minus 0.11% a year from 2015). Approved wording: the `duration_years` key and the diagnostic (sleeve weight × duration × 0.5%, §7.4); unscheduled events widen execution costs, never decisions (§11); the centred paired bootstrap p-value, one-sided for improvement against zero, with register thresholds on the point estimate (§12.4); the annualized excess return as 252 × the mean daily excess return and 97.5% ES as the mean of the worst `ceil(0.025 × T)` daily losses (§12.2). §12.4, §12.6: DSR and PBO count only real-data ledger rows. Appendix F: MinTRL 10.83 years at a Sharpe of 0.5 (full formula), ±0.02 tolerance. §16, §20: the M6 data-vendor choice (`docs/m6_data_sources.md`). Frozen config hash `0f7fd7a1…`. Not part of the approval (marked "to confirm"): the M5 readings in §12.2 (gate statistics), §12.3 (benchmark definitions, P&L attribution, delay), §12.4 (DSR's `V`) and §12.7 (how the report judges the research gate). |

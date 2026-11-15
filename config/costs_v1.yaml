@@ -6,7 +6,8 @@ etf:
   per_side_floor_bps: 10
   impact_bps: 1
   half_spread_bps:            # placeholder: replace with medians measured over 60 normal sessions
-    {VCN: 3, VUN: 3, VIU: 5, VEE: 5, VGV: 3, CGL.C: 5, PDBC: 5, DLR: 3}
+    {VCN: 3, VUN: 3, VIU: 5, VEE: 5, VGV: 3, CGL.C: 5, PDBC: 5, DLR: 3,
+     CBIL: 1}                 # v1.8 cash sleeve: placeholder, measured in the paper run; the 10 bp floor binds
   commission: broker_schedule # load the current IBKR Canada schedule; never assume zero
   participation_cap: 0.005
   carry_forward_sessions: 3

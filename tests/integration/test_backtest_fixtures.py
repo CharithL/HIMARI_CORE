@@ -5,21 +5,36 @@ sleeve (the synthetic TBILL.SYN) with its cash-at-the-broker sensitivity."""
 import csv
 import hashlib
 import shutil
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
 
 from himari.core.config import FrozenConfig, load_config
+from himari.data.calendars import sessions
 from himari.data.ingest import SeriesNames
 from himari.data.storage import VersionedStore
 from himari.execution.costs import load_cost_model
 from himari.gates.events import load_events
-from himari.research.metrics import backtest_metrics, excess_returns, measured_series
+from himari.research.attribution import attribute, leave_one_instrument_out
+from himari.research.metrics import (
+    backtest_metrics,
+    excess_returns,
+    gate_statistics,
+    measured_series,
+)
 from himari.research.stats import paired_bootstrap, sharpe_rows
 from himari.risk.state_machine import SafetyStore
-from himari.sim.engine import Backtest, BacktestResult, BacktestSettings
+from himari.sim.engine import (
+    ALL_SIGNALS_ON,
+    EQUAL_WEIGHT_TIMING,
+    Backtest,
+    BacktestResult,
+    BacktestSettings,
+)
 from himari.sim.market import MarketTruth, PointInTimeData
 from himari.sim.report import nav_csv, summarize, trades_csv
 from himari.sim.run import (
@@ -29,6 +44,7 @@ from himari.sim.run import (
     DEMO_SLEEVE_HALF_SPREAD_BPS,
     DEMO_START,
     RunPlan,
+    broker_cash_config,
     demo_config,
     demo_confirmations,
     fixture_root,
@@ -37,8 +53,9 @@ from himari.sim.run import (
 )
 
 ROOT = Path(__file__).parents[2]
-CFG = load_config(ROOT / "config" / "frozen_v1.yaml")
+CFG = load_config(ROOT / "config" / "frozen_v1.yaml")  # the cash sleeve is CBIL (v1.8)
 SLEEVE_CFG = demo_config(CFG)  # the baseline of record: idle cash in the synthetic sleeve
+BROKER_CFG = broker_cash_config(CFG)  # the sleeve off: idle cash at the broker
 COMMISSIONS = ROOT / "tests" / "fixtures" / "commissions_demo.yaml"
 NAMES = SeriesNames(CFG.sources.fx_series, CFG.sources.cash_rate_series)
 CASH = Decimal("100000")
@@ -49,7 +66,7 @@ REASONS = {
 
 # sha256 of the 1x run log (decisions.jsonl) on the fixture set. Change only on purpose, with a
 # CHANGELOG entry that says why.
-GOLDEN_LOG_HASH = "4f1efa7a8eaeacbd6783e0d931a2467f29a71d2200f283600c61b7a4a815ee5a"  # v1.7
+GOLDEN_LOG_HASH = "68154cacfd21e0f00300213a5005a6cb477aead670a0559ff8992b4d22c49f65"  # M5
 
 
 def plan(multipliers: tuple[float, ...], start: date = DEMO_START, end: date = DEMO_END) -> RunPlan:
@@ -62,14 +79,20 @@ def log_hash(res: BacktestResult) -> str:
 
 
 def backtest(
-    store: VersionedStore, safety: SafetyStore, start: date, end: date, cfg: FrozenConfig = CFG
+    store: VersionedStore,
+    safety: SafetyStore,
+    start: date,
+    end: date,
+    cfg: FrozenConfig = BROKER_CFG,
+    benchmark: str = "",
+    delay_sessions: int = 0,
 ) -> Backtest:
     """A single 1x run with a caller-supplied safety store (for the KILL and fault paths)."""
     conf = demo_confirmations(ROOT)
     data = PointInTimeData(store, cfg, "csv", "xcheck", None, conf.confirmed(),
                            conf.confirmed("Q10"))  # fmt: skip
     costs = load_cost_model(ROOT / "config" / "costs_v1.yaml", 1.0, COMMISSIONS)
-    if cfg.cash_sleeve.active:
+    if cfg.cash_sleeve.symbol == DEMO_SLEEVE:
         costs = costs.with_symbol(DEMO_SLEEVE, DEMO_SLEEVE_HALF_SPREAD_BPS)
     return Backtest(
         cfg,
@@ -77,7 +100,7 @@ def backtest(
         MarketTruth(store, "csv", NAMES),
         costs,
         load_events(ROOT / "config" / "events", cfg.events.map.keys()),
-        BacktestSettings(start, end, CASH, 1.0),
+        BacktestSettings(start, end, CASH, 1.0, benchmark=benchmark, delay_sessions=delay_sessions),
         safety,
     )
 
@@ -385,3 +408,129 @@ class TestCashSleeve:
         notes = [r["sleeve"].get("note", "") for r in res.records
                  if r["kind"] == "decision" and r["date"] >= date(2025, 2, 1)]  # fmt: skip
         assert any("data fault" in n for n in notes)
+
+    def test_cbil_without_data_keeps_cash_at_the_broker(
+        self, store: VersionedStore, tmp_path: Path
+    ) -> None:
+        """v1.8: the frozen config names CBIL; the fixture set has no CBIL bars, so the sleeve
+        waits for the fund's inception and idle cash stays at the broker."""
+        res = backtest(store, SafetyStore(tmp_path / "c.sqlite"), date(2024, 6, 3),
+                       date(2024, 9, 30), CFG).run()  # fmt: skip
+        assert res.sleeve == "CBIL" and not any(t.symbol == "CBIL" for t in res.ledger.trades)
+        notes = [r["sleeve"]["note"] for r in res.records if r["kind"] == "decision"]
+        assert notes and all("inception" in n for n in notes)
+
+
+class TestFixtureChecks:
+    def test_the_viu_split_doubled_the_ledgers_shares(self, runs: list[BacktestResult]) -> None:
+        """The fixture's deliberate 2-for-1 VIU split on 2025-06-16 (SPLITS in
+        make_market_fixtures.py): the ledger doubles the holding and its value does not jump."""
+        res = runs[0]
+        split = next(s for s in res.ledger.splits if s.symbol == "VIU")
+        assert (split.ex_date, split.ratio, split.shares_before, split.shares_added) == (
+            date(2025, 6, 16), Decimal(2), 161, 161,
+        )  # fmt: skip
+        assert res.ledger.held_before("VIU", date(2025, 6, 17)) == 322
+        w = {p.day: p.weights.get("VIU", 0.0) for p in res.nav}
+        assert w[date(2025, 6, 16)] == pytest.approx(w[date(2025, 6, 13)], abs=0.002)
+
+
+@pytest.fixture(scope="module")
+def variants(
+    store: VersionedStore, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, BacktestResult]:
+    """The §12.3 benchmarks 2 and 3 and the one-session delay, at 1x, with the sleeve."""
+    work = tmp_path_factory.mktemp("variants")
+    kinds: dict[str, dict[str, Any]] = {
+        "all_on": {"benchmark": ALL_SIGNALS_ON},
+        "equal": {"benchmark": EQUAL_WEIGHT_TIMING},
+        "delay": {"delay_sessions": 1},
+    }
+    return {
+        name: backtest(store, SafetyStore(work / f"{name}.sqlite"), DEMO_START, DEMO_END,
+                       SLEEVE_CFG, **kw).run()
+        for name, kw in kinds.items()
+    }  # fmt: skip
+
+
+def _measured_decisions(res: BacktestResult) -> list[dict[str, Any]]:
+    return [r for r in res.records if r["kind"] == "decision" and r["date"] >= date(2025, 1, 3)]
+
+
+class TestAttribution:
+    def test_fund_pnl_adds_up_to_the_nav_change(self, runs: list[BacktestResult]) -> None:
+        """Every fund's P&L plus interest, USD cash revaluation and conversion costs is the NAV
+        change of each session, to the cent (with the sleeve and with cash at the broker)."""
+        for res in (runs[0], runs[2]):
+            att = attribute(res)
+            assert float(np.max(np.abs(att.residual))) < 0.05
+            total = sum(float(v.sum()) for v in att.pnl.values()) + float(att.cash.sum())
+            assert total == pytest.approx(res.nav[-1].nav - res.nav[0].nav, abs=1.0)
+
+    def test_leave_one_instrument_out(self, runs: list[BacktestResult]) -> None:
+        res = runs[1]  # 2x: the research gate's cost level
+        rows = leave_one_instrument_out(res)
+        full = backtest_metrics(res, CFG.research).annual_excess_return
+        assert set(rows) == set(res.universe)
+        assert rows["DLR"] == pytest.approx(full)  # never held: nothing to remove
+        assert rows["CGL.C"] != pytest.approx(full, abs=1e-4)  # the largest holding
+
+
+class TestGateStatistics:
+    def test_counts_and_average_scales(self, runs: list[BacktestResult]) -> None:
+        res = runs[0]
+        stats = gate_statistics(res)
+        assert {g: (s.binds, s.decisions) for g, s in stats.items()} == summarize(res).gate_binds
+        assert all(0 < (s.avg_scale or 0) < 1 for s in stats.values() if s.binds)
+        assert stats["event"].binds and stats["stress"].binds
+
+    def test_the_gate_log_carries_weights_in_and_out(self, runs: list[BacktestResult]) -> None:
+        d = _measured_decisions(runs[0])[0]
+        for g in d["gates"]:
+            assert set(g["weights_in"]) == set(g["weights_out"]) == set(runs[0].universe)
+
+
+class TestBenchmarks:
+    def test_all_signals_on_targets_every_eligible_fund(
+        self, variants: dict[str, BacktestResult]
+    ) -> None:
+        decisions = _measured_decisions(variants["all_on"])
+        for r in decisions:
+            assert all(f["target"] > 0 for f in r["funds"].values() if f["eligible"])
+        assert any(not f["on"] and f["target"] > 0 for r in decisions for f in r["funds"].values())
+
+    def test_equal_weight_timing_is_one_eighth_times_the_signal(
+        self, variants: dict[str, BacktestResult]
+    ) -> None:
+        res = variants["equal"]
+        for r in _measured_decisions(res):
+            for f in r["funds"].values():
+                assert f["target"] == pytest.approx(0.125 if f["eligible"] and f["on"] else 0.0)
+            assert [g["gate"] for g in r["gates"]] == ["data", "faults"]
+        assert not any(r["kind"] == "safety" for r in res.records)  # no daily safety check
+
+    def test_the_benchmarks_use_the_same_cash_handling(
+        self, variants: dict[str, BacktestResult]
+    ) -> None:
+        for name in ("all_on", "equal"):
+            res = variants[name]
+            assert res.sleeve == DEMO_SLEEVE
+            assert any(t.symbol == DEMO_SLEEVE for t in res.ledger.trades)
+
+
+class TestDelayVariant:
+    def test_every_fill_comes_one_session_later(
+        self, runs: list[BacktestResult], variants: dict[str, BacktestResult]
+    ) -> None:
+        def lags(res: BacktestResult) -> list[int]:
+            decided = {r["decision_id"]: r["date"] for r in res.records if r["kind"] == "decision"}
+            out = []
+            for day, det in res.fills:
+                if det.decision_id in decided:
+                    code = "XNAS" if det.fill.symbol == "PDBC" else "XTSE"
+                    after = decided[det.decision_id] + timedelta(days=1)
+                    out.append(len(sessions(code, after, day)))
+            return out
+
+        base, late = lags(runs[0]), lags(variants["delay"])
+        assert min(base) == 1 and min(late) == 2 and 1 not in late

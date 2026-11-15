@@ -42,10 +42,10 @@ class TestHolm:
 
 class TestSharpeInference:
     def test_min_trl_appendix_f_golden(self) -> None:
-        """Normal returns, one-sided 95%, SR* = 0: about 10.82 years at an annual Sharpe of 0.5
-        and about 2.71 at 1.0. The full formula gives 10.83 and 2.71; the guide's figures are
-        its leading term (z / SR)^2, so the tolerance is 0.02 years."""
-        assert min_trl(0.5 / DAILY) / 252 == pytest.approx(10.82, abs=0.02)
+        """Appendix F (v1.8): normal returns, one-sided 95%, SR* = 0, the full formula on daily
+        data: 10.83 years at an annual Sharpe of 0.5 (10.82 is the leading term (z / SR)^2) and
+        2.71 at 1.0, to within 0.02 years."""
+        assert min_trl(0.5 / DAILY) / 252 == pytest.approx(10.83, abs=0.02)
         assert min_trl(1.0 / DAILY) / 252 == pytest.approx(2.71, abs=0.02)
 
     def test_min_trl_formula(self) -> None:

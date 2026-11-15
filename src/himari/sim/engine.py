@@ -79,6 +79,12 @@ if TYPE_CHECKING:
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 LOG_DECIMALS = 10  # floats in the run log; keeps the log stable across platforms
 RECEIVABLE_ALERT_DAYS = 30  # v1.6: alert when a distribution is unpaid this long after ex-date
+# §12.3 benchmarks (M5), run through the same engine, ledger and cash handling as the baseline
+ALL_SIGNALS_ON = "all_signals_on"  # benchmark 2: every signal on, everything else unchanged
+EQUAL_WEIGHT_TIMING = "equal_weight_timing"  # benchmark 3: 1/N x signal, no volatility scaling
+BENCHMARKS = ("", ALL_SIGNALS_ON, EQUAL_WEIGHT_TIMING)
+# benchmark 3 keeps only the data and fault gates (and no daily safety or post-trade check)
+UNSCALED_SKIPS = frozenset({"vol_ceiling", "event", "stress", "drawdown", "final_ceiling"})
 
 
 def jsonable(obj: Any) -> Any:
@@ -129,6 +135,8 @@ class BacktestSettings:
     cost_multiplier: float
     fill_at: str = "close"  # "open" is the sensitivity variant, never used for pass or fail
     label: str = ""  # e.g. "cash at the broker" for the sensitivity run (v1.7)
+    benchmark: str = ""  # "" for the strategy, else a §12.3 benchmark (M5)
+    delay_sessions: int = 0  # robustness pack: every fill this many sessions later (M5)
 
     @property
     def run_name(self) -> str:
@@ -183,6 +191,9 @@ class Backtest:
     ) -> None:
         if costs.multiplier != settings.cost_multiplier:
             raise ValueError("the cost model and the settings disagree on the cost multiplier")
+        if settings.benchmark not in BENCHMARKS:
+            raise ValueError(f"unknown benchmark {settings.benchmark!r}")
+        self.unscaled = settings.benchmark == EQUAL_WEIGHT_TIMING
         self.cfg = cfg
         self.data = data
         self.costs = costs
@@ -191,6 +202,10 @@ class Backtest:
         self.safety = safety
         self.tracker = DrawdownTracker(safety, cfg.drawdown)
         self.limits = RiskLimits.from_config(cfg)
+        if self.unscaled:  # benchmark 3: the post-trade check never binds
+            self.limits = dataclasses.replace(
+                self.limits, vol_ceiling=math.inf, single_limit=math.inf, joint_limit=math.inf
+            )
         self.clock = SimClock(settings.start)
         self.eod = time.fromisoformat(cfg.schedule.daily_job_after_et)
         self.master = cfg.calendars.master
@@ -249,6 +264,7 @@ class Backtest:
             stressed=self.stressed,
             fill_at=settings.fill_at,
             last_buys=frozenset({self.sleeve}) if self.sleeve else frozenset(),
+            delay_sessions=settings.delay_sessions,
         )
         self.records: list[dict[str, Any]] = []
         self.nav: list[NavPoint] = []
@@ -387,7 +403,7 @@ class Backtest:
         )
         risk = self._risk(day) if (day in self.weekly or self.ledger.positions) else None
         safety_cuts: set[str] = set()
-        if risk is not None and self.ledger.positions:
+        if risk is not None and self.ledger.positions and not self.unscaled:
             safety_cuts = self._daily_safety(day, now, val, risk)
         if day in self.weekly and risk is not None:
             self._weekly(day, now, val, risk, status, safety_cuts)
@@ -419,6 +435,19 @@ class Backtest:
         ep = self.data.epoch(release_utc(day, self.eod))
         grid = self.grid[: bisect.bisect_right(self.grid, day)]
         return stage1_decision(self.cfg, day, ep.indices, ep.cash, grid)
+
+    def _targets(self, risk: Stage1Decision) -> dict[str, float]:
+        """Pre-gate targets: the strategy's (§7.3), or a §12.3 benchmark's."""
+        if self.settings.benchmark == ALL_SIGNALS_ON:  # the all-on weights a, before signals
+            sz = risk.sizing
+            return {s: float(a) for s, a in zip(sz.symbols, sz.after_cash, strict=True)}
+        if self.unscaled:  # equal weights 1/N for each eligible fund whose signal is on
+            n = len(self.universe)
+            return {
+                s: 1.0 / n if s in risk.eligible and risk.funds[s].signal.on else 0.0
+                for s in self.universe
+            }
+        return risk.weights()
 
     def _cov(self, risk: Stage1Decision) -> FloatArray:
         sigmas = [risk.funds[s].sigma_floored or 0.0 for s in self.universe]
@@ -541,7 +570,7 @@ class Backtest:
             ),
             self.cfg.data_quality,
         )
-        targets = risk.weights()
+        targets = self._targets(risk)
         held = self._risk_weights(val)
         cov = self._cov(risk)
         start, ends = event_window(day, self.master, self.calendars)
@@ -558,7 +587,7 @@ class Backtest:
             venue_fault=self.safety.venue_fault_active(),
             kill=self.safety.kill_active(),
         )
-        gates = run_gates(targets, held, ctx)
+        gates = run_gates(targets, held, ctx, UNSCALED_SKIPS if self.unscaled else frozenset())
         entering_halved = (
             status.state == DrawdownState.HALVED and self._decision_state != DrawdownState.HALVED
         )
@@ -599,6 +628,8 @@ class Backtest:
                     "bound": g.bound,
                     "scale": g.scale_applied,
                     "details": g.details,
+                    "weights_in": g.weights_in,  # M5: gate statistics need entry and exit
+                    "weights_out": g.weights_out,
                 }
                 for g in gates.logs
             ],

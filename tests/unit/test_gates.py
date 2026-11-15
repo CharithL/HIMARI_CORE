@@ -193,3 +193,27 @@ class TestPipeline:
         assert run.orders_blocked
         assert run.weights["VCN"] == 0.05  # no addition under KILL
         assert math.isclose(run.weights["VGV"], 0.2)  # a cut passes through the weights
+
+    def test_the_unscaled_benchmark_skips_all_but_the_data_and_fault_gates(self) -> None:
+        """M5: benchmark 3 (equal-weight timing) runs only the data and fault gates; those two
+        can never be skipped."""
+        syms = ("VCN", "VGV")
+        ctx = GateContext(
+            quality=all_ok(syms),
+            symbols=syms,
+            covariance=np.diag([0.40**2, 0.30**2]),  # far above the 8% ceiling
+            vol_ceiling=0.08,
+            pre_event={},
+            stress=CFG.stress,
+            drawdown_state=DrawdownState.SUSPENDED,
+            halve_multiplier=0.5,
+            venue_fault=False,
+            kill=False,
+        )
+        skip = frozenset({"vol_ceiling", "event", "stress", "drawdown", "final_ceiling"})
+        run = run_gates({"VCN": 0.5, "VGV": 0.5}, {}, ctx, skip)
+        assert [log.gate_name for log in run.logs] == ["data", "faults"]
+        assert run.weights == {"VCN": 0.5, "VGV": 0.5}
+        for bad in ({"data"}, {"faults"}, {"no_such_gate"}):
+            with pytest.raises(ValueError):
+                run_gates({"VCN": 0.5}, {}, ctx, frozenset(bad))

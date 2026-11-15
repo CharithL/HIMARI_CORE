@@ -44,8 +44,22 @@ class GateRun:
     orders_blocked: bool  # KILL: the order stage sends nothing, cuts included
 
 
+GATE_ORDER = (
+    "data",
+    "vol_ceiling",
+    "event",
+    "stress",
+    "drawdown",
+    "faults",
+    "final_ceiling",
+)
+
+
 def run_gates(
-    weights_in: Mapping[str, float], holdings: Mapping[str, float], ctx: GateContext
+    weights_in: Mapping[str, float],
+    holdings: Mapping[str, float],
+    ctx: GateContext,
+    skip: frozenset[str] = frozenset(),
 ) -> GateRun:
     """data -> volatility ceiling -> event -> stress -> drawdown -> faults and kill switch ->
     final volatility ceiling (v1.7).
@@ -53,21 +67,37 @@ def run_gates(
     The event, drawdown and fault gates cap funds at their holdings; capping a negatively
     correlated fund can raise sigma_p above the ceiling, so the ceiling runs again last. No
     second stress pass is needed while no fund gains in a loss scenario (a cut can then never
-    raise a scenario loss); a test on the config guards that."""
+    raise a scenario loss); a test on the config guards that.
+
+    `skip` names gates left out: only the §12.3 unscaled-timing benchmark uses it (M5); the
+    data and fault gates can never be skipped."""
+    if skip - set(GATE_ORDER) or skip & {"data", "faults"}:
+        raise ValueError(f"cannot skip {sorted(skip)}: unknown, or a data or fault gate")
     w = dict(weights_in)
     logs: list[GateLog] = []
-    steps: list[Callable[[dict[str, float]], tuple[dict[str, float], GateLog]]] = [
-        lambda x: apply_data_gate(x, holdings, ctx.quality),
-        lambda x: apply_vol_ceiling(x, ctx.symbols, ctx.covariance, ctx.vol_ceiling),
-        lambda x: apply_event_gate(x, holdings, ctx.pre_event),
-        lambda x: apply_stress_gate(x, ctx.stress),
-        lambda x: apply_drawdown_gate(x, holdings, ctx.drawdown_state, ctx.halve_multiplier),
-        lambda x: apply_fault_gate(x, holdings, ctx.venue_fault, ctx.kill),
-        lambda x: apply_vol_ceiling(
-            x, ctx.symbols, ctx.covariance, ctx.vol_ceiling, gate_name="final_ceiling"
+    steps: list[tuple[str, Callable[[dict[str, float]], tuple[dict[str, float], GateLog]]]] = [
+        ("data", lambda x: apply_data_gate(x, holdings, ctx.quality)),
+        (
+            "vol_ceiling",
+            lambda x: apply_vol_ceiling(x, ctx.symbols, ctx.covariance, ctx.vol_ceiling),
+        ),
+        ("event", lambda x: apply_event_gate(x, holdings, ctx.pre_event)),
+        ("stress", lambda x: apply_stress_gate(x, ctx.stress)),
+        (
+            "drawdown",
+            lambda x: apply_drawdown_gate(x, holdings, ctx.drawdown_state, ctx.halve_multiplier),
+        ),
+        ("faults", lambda x: apply_fault_gate(x, holdings, ctx.venue_fault, ctx.kill)),
+        (
+            "final_ceiling",
+            lambda x: apply_vol_ceiling(
+                x, ctx.symbols, ctx.covariance, ctx.vol_ceiling, gate_name="final_ceiling"
+            ),
         ),
     ]
-    for step in steps:
+    for name, step in steps:
+        if name in skip:
+            continue
         out, log = step(w)
         check_cut_only(log.gate_name, w, out)
         logs.append(log)

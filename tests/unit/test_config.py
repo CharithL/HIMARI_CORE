@@ -19,6 +19,18 @@ class TestConfigLoading:
         cfg = load_config(CONFIG_PATH)
         assert len(cfg.stage1.universe) == 8
 
+    def test_the_cash_sleeve_is_cbil_with_the_same_cost_floor(self) -> None:
+        """v1.8: CBIL, its factsheet duration, and the 10 bp per-side floor like any fund."""
+        from himari.execution.costs import load_cost_model
+
+        cfg = load_config(CONFIG_PATH)
+        assert cfg.cash_sleeve.active and cfg.cash_sleeve.symbol == "CBIL"
+        assert cfg.cash_sleeve.duration_years == 0.16
+        root = CONFIG_PATH.parents[1]
+        costs = load_cost_model(root / "config" / "costs_v1.yaml", 1.0,
+                                root / "tests" / "fixtures" / "commissions_demo.yaml")  # fmt: skip
+        assert costs.side_bps("CBIL") == costs.side_bps("VCN") == 10.0
+
     def test_stage1_instruments(self) -> None:
         cfg = load_config(CONFIG_PATH)
         instruments = cfg.stage1.instruments()

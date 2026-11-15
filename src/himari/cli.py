@@ -401,9 +401,40 @@ def register_run(
 
 
 @register_app.command("status")
-def register_status() -> None:
-    """Show the status of all registered tests."""
-    typer.echo("[M8] register status (not yet implemented)")
+def register_status(
+    state_dir: Path = typer.Option(Path("state"), help="State root (trials.sqlite)"),
+    register: Path = typer.Option(Path("research") / "register.yaml", help="Register file"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+) -> None:
+    """Show the status of all registered tests, from the ledger's real-data trials (v1.8)."""
+    _echo_register_status(state_dir, register, config)
+
+
+def _echo_register_status(state_dir: Path, register: Path, config: Path) -> None:
+    from himari.core.config import load_config
+    from himari.research.register import load_register
+    from himari.research.register import register_status as status_of
+    from himari.research.trials import TrialLedger
+
+    cfg = load_config(config)
+    reg = load_register(register, cfg.research.holm_alpha)
+    st = status_of(reg, TrialLedger(state_dir / "trials.sqlite"))
+    for e in st.tests:
+        if e.p_value is None:
+            state = f"not at its endpoint ({e.trials} real-data trials)"
+        else:
+            holm = (
+                ""
+                if e.holm_reject is None
+                else (", Holm: reject" if e.holm_reject else ", Holm: keep")
+            )
+            state = f"p = {e.p_value:.4f}{holm}"
+        typer.echo(f"{e.test.id:<4} stage {e.test.stage}  {state}  | {e.test.title}")
+    typer.echo(
+        f"Endpoints reached: {st.endpoints_reached} of {len(st.tests)}. Holm "
+        f"{'applied' if st.holm_applied else 'waits for every endpoint'} (alpha "
+        f"{reg.family_alpha}); a decision before then needs p <= {cfg.research.early_decision_p}."
+    )
 
 
 @app.command("shadow")
@@ -417,10 +448,96 @@ def shadow(
 
 @app.command("report")
 def report(
-    report_type: str = typer.Argument(..., help="weekly|baseline|register"),
+    report_type: str = typer.Argument(..., help="baseline|register|weekly"),
+    demo: bool = typer.Option(False, "--demo", help="The baseline report on the fixture data"),
+    label: str = typer.Option("baseline", help="Trial ledger id for the baseline runs"),
+    state_dir: Path = typer.Option(Path("state"), help="State root (runs/, trials.sqlite)"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
-    """Generate a report."""
-    typer.echo(f"[M5] generating {report_type} report (not yet implemented)")
+    """baseline: the M5 research report (metrics, benchmarks, statistics, robustness pack,
+    research gate); register: the register's status; weekly: M7."""
+    if report_type == "register":
+        _echo_register_status(state_dir, Path("research") / "register.yaml", config)
+        return
+    if report_type == "weekly":
+        typer.echo("[M7] weekly report (not yet implemented)")
+        raise typer.Exit(2)
+    if report_type != "baseline":
+        raise typer.BadParameter("report type must be baseline, register or weekly")
+    if not demo:
+        typer.echo(
+            "The real-data baseline report is part of M6: it needs the vendor data, the IBKR "
+            "commission schedule and the synthetic pre-inception sleeve sensitivity. Use --demo "
+            "for the fixture data."
+        )
+        raise typer.Exit(2)
+    _demo_research_report(label, state_dir, config)
+
+
+def _demo_research_report(label: str, state_dir: Path, config: Path) -> None:
+    import tempfile
+
+    from himari.core.config import load_config, run_hashes
+    from himari.core.ids import run_id
+    from himari.research.report import build_research_report, research_html
+    from himari.research.trials import TrialLedger
+    from himari.sim import run as runner
+    from himari.sim.report import write_run
+
+    cfg = runner.demo_config(load_config(config))  # the synthetic cash-sleeve fund
+    root = Path.cwd()
+    rid = run_id()
+    out_dir = state_dir / "runs" / rid
+    schedule = root / "tests" / "fixtures" / "commissions_demo.yaml"
+    plan = runner.RunPlan(
+        runner.DEMO_START, runner.DEMO_END, runner.initial_nav(cfg), (1.0, 2.0), schedule,
+        "csv", "xcheck", "close", runner.DEMO_SLEEVE_HALF_SPREAD_BPS,
+    )  # fmt: skip
+    with tempfile.TemporaryDirectory() as tmp:
+        store = runner.ingest_demo_fixtures(cfg, root, Path(tmp) / "clean")
+        runs = runner.run_research_pack(
+            cfg, root, store, plan, out_dir, None, runner.demo_confirmations(root)
+        )
+        version = "fixtures:" + runner.data_version(store)
+    data_label = "SYNTHETIC fixture data (not market data)"
+    notices = [
+        "Synthetic fixture data, a synthetic commission schedule and a synthetic cash-sleeve "
+        f"fund ({runner.DEMO_SLEEVE}): the numbers show how the research engine works, not how "
+        "the strategy performs. One measured year cannot pass the research gate."
+    ]
+    hashes = run_hashes(root)
+    note = (
+        f"research pack on synthetic fixture data | costs {hashes['costs'][:12]} | "
+        f"commissions {schedule.name} | run {rid}"
+    )
+    ledger = TrialLedger(state_dir / "trials.sqlite")
+    others = [*runs.broker_cash, *(r for rs in runs.benchmarks.values() for r in rs), *runs.delayed]
+    runner.log_trials(ledger, runs.baseline, root, hashes, version, label, note, _utc_now())
+    runner.log_trials(ledger, others, root, hashes, version, "adhoc", note, _utc_now())
+    runner.write_outputs(
+        [*runs.baseline, *runs.broker_cash], out_dir, "HIMARI backtest (demo)", data_label,
+        f"{schedule.name} (SYNTHETIC)", notices,
+    )  # fmt: skip
+    for r in others[len(runs.broker_cash) :]:
+        write_run(r, out_dir / r.settings.run_name)
+    rep = build_research_report(
+        runs, cfg, ledger, "HIMARI research report (demo)", data_label, hashes["config"],
+        version, notices,
+    )  # fmt: skip
+    path = out_dir / "research.html"
+    path.write_text(research_html(rep), encoding="utf-8", newline="\n")
+    typer.echo(f"Research gate at 2x: {rep.verdict}")
+    for c in rep.research_gate:
+        typer.echo(f"  {c.status:<4} {c.criterion}: {c.value}")
+    for m in [*rep.baseline, *rep.broker_cash, *(x for v in rep.benchmarks.values() for x in v),
+              *rep.delayed]:  # fmt: skip
+        typer.echo(
+            f"{m.name}: excess {m.metrics.annual_excess_return:+.2%}, Sharpe "
+            f"{m.metrics.sharpe:.2f}, CER {m.metrics.cer:+.2%}, ES {m.metrics.es:.2%}, max "
+            f"drawdown {m.metrics.max_drawdown:.2%}"
+        )
+    typer.echo(f"Research report: {path}")
+    typer.echo(f"Run files: {out_dir}")
 
 
 @app.command("dashboard")

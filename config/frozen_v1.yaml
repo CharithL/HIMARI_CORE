@@ -103,12 +103,12 @@ account:
 
 cash_sleeve:                # amendment v1.7 (section 7.4): idle CAD cash in one CAD-listed T-bill ETF
   enabled: true
-  symbol: null              # the user picks the fund; null keeps idle cash at the broker
+  symbol: CBIL              # amendment v1.8: Global X 0-3 Month T-Bill ETF (TSX), from its inception (2023-04-12)
   buffer_nav: 0.02          # buffer = max(0.02 x NAV, 200)
   buffer_min_cad: 200
   band_nav: 0.03            # band = max(0.03 x NAV, 1000)
   band_min_cad: 1000
-  duration_years: null      # from the chosen fund's factsheet; for the +50 bp diagnostic
+  duration_years: 0.16      # amendment v1.8: CBIL weighted average duration, issuer page, as at 2026-10-31
 
 drawdown:
   halve_at: -0.10

@@ -231,3 +231,20 @@ def test_sale_proceeds_earn_once_settled() -> None:
     b.run_session(date(2025, 1, 7))  # sold: T+1, settles 8 January
     assert b.settled_cash("CAD", date(2025, 1, 7)) < D("13000")
     assert b.settled_cash("CAD", date(2025, 1, 8)) == b.cash()["CAD"]
+
+
+def test_the_delay_variant_fills_one_session_later() -> None:
+    """Robustness pack (§12.3, v1.7): with delay_sessions=1 an order passes over the first
+    session after it was placed; the session passed over is not a fill attempt."""
+    b = SimBroker(FakeTruth(), COSTS, CAL, CUR, EXCH, frozenset({"PDBC"}), D("0.15"), 0.005, 3,
+                  0.01, 3, {"CAD": D("100000")}, delay_sessions=1)  # type: ignore[arg-type]  # fmt: skip
+    b.start(date(2025, 1, 3))
+    b.submit([order("VCN", "buy", 100)])
+    assert b.run_session(date(2025, 1, 6)).fills == []
+    (f,) = b.run_session(date(2025, 1, 7)).fills
+    assert f.fill.shares == 100
+    o = b.order("D-1:VCN")
+    assert o is not None and o.attempts == 1 and o.delayed == 1
+    with pytest.raises(ValueError):
+        SimBroker(FakeTruth(), COSTS, CAL, CUR, EXCH, frozenset(), D("0"), 0.005, 3, 0.01, 3,
+                  {"CAD": D("1")}, delay_sessions=-1)  # type: ignore[arg-type]  # fmt: skip
