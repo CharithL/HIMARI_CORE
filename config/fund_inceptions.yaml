@@ -1,0 +1,36 @@
+# Fund inception and listing (first trading) dates, from each issuer's product page, checked on
+# 16 November 2026. `himari data coverage` compares each source's first bar with the listing
+# date where the issuer gives one, else with the inception date. Reference data, not parameters.
+funds:
+  VCN:
+    inception: 2013-08-02
+    listing: 2013-08-12
+    source: https://www.vanguard.ca/en/product/etf/equity/9561/vanguard-ftse-canada-all-cap-index-etf
+  VUN:
+    inception: 2013-08-02
+    listing: 2013-08-12
+    source: https://www.vanguard.ca/en/product/etf/equity/9557/vanguard-morningstar-us-total-market-index-etf
+  VIU:
+    inception: 2015-12-01
+    listing: 2015-12-08
+    source: https://www.vanguard.ca/en/product/etf/equity/9569/vanguard-ftse-developed-all-cap-ex-north-america-index-etf
+  VEE:
+    inception: 2011-11-30
+    listing: 2011-12-06
+    source: https://www.vanguard.ca/en/product/etf/equity/9556/vanguard-ftse-emerging-markets-all-cap-index-etf
+  VGV:
+    inception: 2017-01-31
+    listing: 2017-02-07
+    source: https://www.vanguard.ca/en/product/etf/fixed-income/1817/vanguard-canadian-government-bond-index-etf
+  CGL.C:
+    inception: 2011-03-31   # the non-hedged common units; the hedged CGL started 2009-05-28
+    source: https://www.blackrock.com/ca/investors/en/products/241528/ishares-gold-bullion-etf
+  PDBC:
+    inception: 2014-11-07
+    source: https://www.invesco.com/us/en/financial-products/etfs/invesco-optimum-yield-diversified-commodity-strategy-no-k-1-etf.html
+  DLR:
+    inception: 2011-04-06
+    source: https://www.globalx.ca/product/dlr
+  CBIL:
+    inception: 2023-04-12
+    source: https://www.globalx.ca/product/cbil

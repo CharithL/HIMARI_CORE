@@ -44,7 +44,10 @@ DEMO_OBSERVED = datetime(2026, 1, 5, tzinfo=UTC)
 DEMO_SLEEVE, DEMO_SLEEVE_HALF_SPREAD_BPS, DEMO_SLEEVE_DURATION = "TBILL.SYN", 1.0, 0.15
 BROKER_CASH = "cash at the broker"  # the sensitivity label when the sleeve is on
 # M5: the §12.3 benchmarks and the robustness pack's delay variant, as run labels
-BENCHMARK_LABELS = {ALL_SIGNALS_ON: "all signals on", EQUAL_WEIGHT_TIMING: "equal-weight timing"}
+BENCHMARK_LABELS = {
+    ALL_SIGNALS_ON: "all signals on",
+    EQUAL_WEIGHT_TIMING: "naive equal-weight timing (uncapped)",  # v1.9 label
+}
 DELAYED = "fills one session later"
 
 

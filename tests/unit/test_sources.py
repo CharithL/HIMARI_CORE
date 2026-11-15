@@ -116,10 +116,12 @@ class TestBocValetHttp:
 
 
 class TestVendorStub:
+    """v1.9: the placeholder points at the EODHD adapter."""
+
     def test_bars_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError, match="vendor"):
+        with pytest.raises(NotImplementedError, match="EodhdSource"):
             VendorSource().fetch_bars("VCN", *ALL)
 
     def test_actions_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError, match="vendor"):
+        with pytest.raises(NotImplementedError, match="EodhdSource"):
             VendorSource().fetch_actions("VCN", *ALL)

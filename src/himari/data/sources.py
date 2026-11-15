@@ -172,12 +172,13 @@ class BocValetSource(SeriesSource):
 
 
 class VendorSource(DataSource):
-    """Primary end-of-day vendor (§5.2). The vendor is not chosen yet (§20): interface only."""
+    """Placeholder for the primary vendor (§5.2). The vendor is EODHD (v1.9): its adapter is
+    `himari.data.eodhd.EodhdSource`; ingestion through `himari data update` is M6."""
 
     name = "vendor"
 
     def fetch_bars(self, symbol: str, start: date, end: date) -> list[Bar]:
-        raise NotImplementedError("No end-of-day vendor chosen yet (build guide §20)")
+        raise NotImplementedError("use himari.data.eodhd.EodhdSource (v1.9); ingestion is M6")
 
     def fetch_actions(self, symbol: str, start: date, end: date) -> list[CorporateAction]:
-        raise NotImplementedError("No end-of-day vendor chosen yet (build guide §20)")
+        raise NotImplementedError("use himari.data.eodhd.EodhdSource (v1.9); ingestion is M6")

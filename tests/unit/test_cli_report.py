@@ -30,9 +30,17 @@ def test_demo_research_report(tmp_path: Path) -> None:
         "Gate statistics",
     ):
         assert heading in page
-    assert "all signals on" in page and "equal-weight timing" in page and "CAD cash" in page
-    assert "0 real-data rows (10 fixture or demo rows excluded" in page
-    for name in ("1x-all-signals-on", "2x-equal-weight-timing", "2x-fills-one-session-later"):
+    assert "all signals on" in page and "naive equal-weight timing (uncapped)" in page
+    assert "CAD cash" in page
+    # v1.9: DSR is reported on the first page and is not a gate criterion
+    first = page.index("Sharpe inference (§12.4): reported, not judged")
+    assert page.index("Research gate (§12.7)") < first < page.index("Metrics (§12.2)")
+    assert "n/a (N=0 &lt; 2)" in page and "cannot prove a Sharpe ratio near 0.5" in page
+    assert "DSR" not in result.output
+    assert "real-data rows (0; 10 fixture or demo rows excluded)" in page
+    names = ("1x-all-signals-on", "2x-naive-equal-weight-timing-uncapped",
+             "2x-fills-one-session-later")  # fmt: skip
+    for name in names:
         assert (run / name / "decisions.jsonl").exists()
     with closing(sqlite3.connect(tmp_path / "trials.sqlite")) as con:
         hyps = [h for (h,) in con.execute("SELECT hypothesis_id FROM trials ORDER BY seq")]

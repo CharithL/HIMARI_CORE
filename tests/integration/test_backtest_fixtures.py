@@ -26,6 +26,7 @@ from himari.research.metrics import (
     gate_statistics,
     measured_series,
 )
+from himari.research.shuffle import shuffled_market
 from himari.research.stats import paired_bootstrap, sharpe_rows
 from himari.risk.state_machine import SafetyStore
 from himari.sim.engine import (
@@ -86,21 +87,24 @@ def backtest(
     cfg: FrozenConfig = BROKER_CFG,
     benchmark: str = "",
     delay_sessions: int = 0,
+    multiplier: float = 1.0,
 ) -> Backtest:
-    """A single 1x run with a caller-supplied safety store (for the KILL and fault paths)."""
+    """A single run (1x by default) with a caller-supplied safety store."""
     conf = demo_confirmations(ROOT)
     data = PointInTimeData(store, cfg, "csv", "xcheck", None, conf.confirmed(),
                            conf.confirmed("Q10"))  # fmt: skip
-    costs = load_cost_model(ROOT / "config" / "costs_v1.yaml", 1.0, COMMISSIONS)
+    costs = load_cost_model(ROOT / "config" / "costs_v1.yaml", multiplier, COMMISSIONS)
     if cfg.cash_sleeve.symbol == DEMO_SLEEVE:
         costs = costs.with_symbol(DEMO_SLEEVE, DEMO_SLEEVE_HALF_SPREAD_BPS)
+    settings = BacktestSettings(start, end, CASH, multiplier, benchmark=benchmark,
+                                delay_sessions=delay_sessions)  # fmt: skip
     return Backtest(
         cfg,
         data,
         MarketTruth(store, "csv", NAMES),
         costs,
         load_events(ROOT / "config" / "events", cfg.events.map.keys()),
-        BacktestSettings(start, end, CASH, 1.0, benchmark=benchmark, delay_sessions=delay_sessions),
+        settings,
         safety,
     )
 
@@ -433,6 +437,23 @@ class TestFixtureChecks:
         assert res.ledger.held_before("VIU", date(2025, 6, 17)) == 322
         w = {p.day: p.weights.get("VIU", 0.0) for p in res.nav}
         assert w[date(2025, 6, 16)] == pytest.approx(w[date(2025, 6, 13)], abs=0.002)
+        assert not any("reconciliation" in a for a in res.alerts)
+
+    def test_a_fill_on_a_split_day_is_booked_after_the_split(self, tmp_path: Path) -> None:
+        """Regression (M5 review): on an ex-date the broker splits holdings and open orders
+        before it fills, so the ledger books the split before that day's fills. Before the fix
+        the ledger booked the fills first and a sale of post-split shares left it short. The
+        shuffled-returns copy with seed 5 sells VIU on its split day, 2025-06-16, at 2x."""
+        funds = [i.symbol for i in CFG.stage1.instruments()]
+        market = shuffled_market(fixture_root(ROOT), tmp_path / "market", funds, 5)
+        st = ingest_demo_fixtures(CFG, ROOT, tmp_path / "store", market)
+        res = backtest(st, SafetyStore(tmp_path / "s.sqlite"), DEMO_START, DEMO_END, SLEEVE_CFG,
+                       multiplier=2.0).run()  # fmt: skip
+        split_day = date(2025, 6, 16)
+        assert any(day == split_day and det.fill.symbol == "VIU" for day, det in res.fills)
+        split = next(s for s in res.ledger.splits if s.symbol == "VIU")
+        assert split.booked_on == split_day and split.shares_before > 0
+        assert not any("reconciliation" in a for a in res.alerts)
 
 
 @pytest.fixture(scope="module")

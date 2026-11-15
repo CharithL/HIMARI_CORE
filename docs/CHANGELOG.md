@@ -4,6 +4,42 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.9 and M6 preparation (2026-11-16, approved by the user)
+- B (§12.4, §12.7, amends a frozen rule): DSR is reported, not judged. "DSR >= 0.95" leaves the
+  research gate; the research report's first page shows DSR at the ledger's real-data trial
+  count and at N = 10 to 10,000, with PSR(0), MinTRL and the caveat that 11 years cannot prove a
+  Sharpe near 0.5. Over 11 years, DSR >= 0.95 needs an annual Sharpe of 0.971 at N = 10 and 1.662
+  at N = 10,000 (checked on the code, normal moments, V = 1 / (T - 1)). The gate verdict now
+  ignores the Holm row for a baseline (it is n/a by design; before, a baseline passing
+  everything else would have shown UNDECIDED).
+- A, approved wording: the gate statistics' average scale; benchmark 3, now labelled "naive
+  equal-weight timing (uncapped)" (run folders use a slug, `2x-naive-equal-weight-timing-uncapped`);
+  the P&L attribution and delay mechanics; history = measured sessions / 252 and an annual block
+  of at least 240 sessions; the negative leave-one-out row rule; the part 1 variance, moment and
+  PBO conventions; DSR's V = max(cross-trial variance of per-period Sharpe ratios, 1 / (T - 1))
+  (`research.report.dsr_variance`, tested). Still to confirm: the benchmark 2 reading.
+- C, the delay cost on the fixture: `scripts/diagnostics/delay_shuffle.py` and
+  `research/shuffle.py` (each fund's daily returns shuffled in time, splits and distributions
+  kept). Original fixture at 2x: gap +0.62% a year, of which +0.45% of NAV is the one-day price
+  drift on the baseline's own trades and +0.06% extra costs. Over 10 shuffles: mean gap +0.20%
+  a year (sd 0.51%); the price drift averages +0.004% of NAV, and the rest matches the extra cost
+  of delayed fills landing in event windows (stressed fills about 3 -> 12 per run, extra costs
+  +0.19% of NAV on average). No sign of look-ahead.
+- Bug found by the shuffles and fixed: on an ex-date the broker splits holdings and open orders
+  before it fills, but the engine booked the session's fills in the ledger before the split, so a
+  sale of post-split shares on a split day left the ledger short and stopped the run. The engine
+  now books corporate actions before fills (a distribution's entitlement uses the holding before
+  its ex-date either way). The committed fixture never traded on a split day, so the run-log
+  golden is unchanged; a regression test runs shuffle seed 5, which sells VIU on 2025-06-16.
+- D (§5.2, §16): EODHD adapter (`data/eodhd.py`: raw OHLC with adjusted_close for Q5,
+  unadjustedValue distributions, split ratios, CGL.C resolved from the exchange symbol list,
+  responses cached, the key never in errors, logs or cache names), `core/secrets.py`
+  (environment, then `.env`), `data/coverage.py` and `himari data coverage`. Fund inception and
+  listing dates from the issuers' pages in `config/fund_inceptions.yaml`. The key is not set
+  yet, so the coverage run is still to do. VIU (listed 2015-12-08) and VGV (2017-02-07) start
+  after the evaluation window opens. Cross-check options and terms in `docs/m6_data_sources.md`.
+- E: the IBKR pricing plan and the account size were left blank again; asked again.
+
 ### Amendment v1.8 — CBIL sleeve, approved statistics wording, real-data trial counts (2026-11-15, approved by the user)
 - A (§7.4): `cash_sleeve.symbol: CBIL` and `duration_years: 0.16` (CBIL's weighted average
   duration on globalx.ca, as at 2026-10-31). CBIL is used from its inception (2023-04-12);

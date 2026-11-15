@@ -1,8 +1,32 @@
 # End-of-day data sources for M6
 
-Checked on 15 November 2026 on each vendor's own pricing, documentation and terms pages.
-Prices are in USD, for personal (non-professional) use, as the vendor shows them. The user
-picks one; §5.2 still needs a second, independent price source as the cross-check.
+**Chosen primary (v1.9 review): EODHD, EOD Historical plan.** The key goes in the gitignored
+`.env` as `VENDOR_API_KEY=...` (§18); it is read from there and never printed. Then:
+
+    himari data coverage
+
+checks each of the nine funds (prices, splits, distributions) from its listing date in
+`config/fund_inceptions.yaml` and lists every gap. It needs about 28 API calls (3 per fund and
+1 symbol list to resolve CGL.C) and caches every response under `data/raw/eodhd/`, so a rerun
+spends nothing. EODHD's free plan gives 20 calls a day and one year of history, so the
+from-inception check needs the paid plan; on the free plan every fund would show a late start.
+
+## Cross-check source (§5.2): options for the user to pick
+
+Checked on 16 November 2026 on each site's own pages and terms.
+
+| Option | What it gives | Cost | Terms (personal use) | Gaps |
+|---|---|---|---|---|
+| IBKR daily bars (TWS API), once the account exists | Exchange OHLCV for all nine funds, independent of EODHD; daily bars up to 68 years per request, pacing limits lifted for 1-minute bars and larger | Toronto Stock Exchange L1 CAD 9.00/month and NASDAQ L1 USD 1.50/month (non-professional; footnoted eligibility on IBKR's page) | Market data under IBKR's non-professional subscriber terms | History depth is not documented: checked per fund with `reqHeadTimestamp`; no distribution history |
+| Issuers' own pages | Vanguard (VCN, VUN, VIU, VEE, VGV): daily NAV and market price download ("Download 3,009 prices" for VCN, VUN and VEE, about 12 years; 2,749 for VIU and 2,457 for VGV) and a distribution history with separate cash and reinvested columns. BlackRock (CGL.C): historical NAV xls. Global X (DLR, CBIL): distribution table, NAV chart only. Invesco (PDBC): an "Export data" button | Free | All: personal, non-commercial. Vanguard: downloading and storing for personal use allowed; automated access not addressed. BlackRock: robots, scripts and "automated devices" prohibited without permission. Invesco: no downloading beyond page caching; robots and scraping prohibited. Global X: all rights reserved; its pages refuse scripted requests | NAV is not the market close (BlackRock); no price download for Global X or Invesco; manual downloads only |
+
+The issuers' distribution histories also serve Q10: Vanguard and Global X show the cash and
+reinvested parts of each December distribution.
+
+## Vendor comparison (15 November 2026)
+
+Checked on each vendor's own pricing, documentation and terms pages. Prices are in USD, for
+personal (non-professional) use, as the vendor shows them.
 
 | | EODHD | Financial Modeling Prep (FMP) | Alpha Vantage |
 |---|---|---|---|
@@ -37,3 +61,11 @@ picks one; §5.2 still needs a second, independent price source as the cross-che
 - Alpha Vantage premium plans: https://www.alphavantage.co/premium/
 - Alpha Vantage documentation: https://www.alphavantage.co/documentation/
 - Alpha Vantage terms: https://alphavantage.co/terms_of_service
+- EODHD end-of-day API: https://eodhd.com/financial-apis/api-for-historical-data-and-volumes
+- EODHD exchanges and tickers API: https://eodhd.com/financial-apis/exchanges-api-list-of-tickers-and-trading-hours
+- Vanguard Canada products and terms: https://www.vanguard.ca/en/product, https://www.vanguard.ca/en/website-terms-of-use
+- BlackRock Canada CGL.C and terms: https://www.blackrock.com/ca/investors/en/products/241528/ishares-gold-bullion-etf, https://www.blackrock.com/ca/investors/en/terms-and-conditions
+- Global X Canada DLR and terms: https://www.globalx.ca/product/dlr, https://www.globalx.ca/terms-of-use
+- Invesco PDBC and terms: https://www.invesco.com/us/en/financial-products/etfs/invesco-optimum-yield-diversified-commodity-strategy-no-k-1-etf.html, https://www.invesco.com/us/en/resources/terms-of-use.html
+- IBKR Canada market data pricing: https://www.interactivebrokers.ca/en/pricing/market-data-pricing.php
+- IBKR TWS API historical limitations: https://interactivebrokers.github.io/tws-api/historical_limitations.html

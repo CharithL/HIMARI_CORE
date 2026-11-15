@@ -77,7 +77,11 @@ def data_update(
     from himari.data.storage import AppendResult, RawStore, VersionedStore
 
     if source == "vendor":
-        typer.echo("No end-of-day vendor chosen yet (build guide §20).", err=True)
+        typer.echo(
+            "The vendor is EODHD (v1.9); ingesting it is M6. Check its coverage first with "
+            "`himari data coverage`.",
+            err=True,
+        )
         raise typer.Exit(1)
     if source == "ibkr":
         typer.echo("IBKR data arrives in M7.", err=True)
@@ -183,6 +187,70 @@ def data_check(
     for r in report.portfolio:
         if r.severity != Severity.PASS:
             typer.echo(f"  portfolio {r.check} {r.severity.value} {r.detail}")
+
+
+@data_app.command("coverage")
+def data_coverage(
+    source: str = typer.Option("eodhd", help="Price source to check (eodhd)"),
+    from_date: str = typer.Option(None, "--from", help="Window start (default 1990-01-01)"),
+    to_date: str = typer.Option(None, "--to", help="Window end (default today)"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root (responses cached in raw/)"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+    inceptions: Path = typer.Option(
+        Path("config") / "fund_inceptions.yaml", help="Fund inception dates with their sources"
+    ),
+) -> None:
+    """M6 preparation: each fund's prices, splits and distributions from its inception in a
+    price source, with every gap listed. Reads VENDOR_API_KEY from the environment or .env and
+    never prints it; responses are cached, so a rerun spends no API calls."""
+    import yaml
+
+    from himari.core.config import load_config
+    from himari.core.secrets import secret
+    from himari.data.coverage import check_fund
+    from himari.data.eodhd import BASE_URL, EodhdClient, EodhdError, EodhdSource
+
+    if source != "eodhd":
+        raise typer.BadParameter("only eodhd is implemented")
+    key = secret("VENDOR_API_KEY")
+    if not key:
+        typer.echo(
+            "VENDOR_API_KEY is not set. Put it in .env (gitignored, §18) as VENDOR_API_KEY=...; "
+            "it is read from there and never printed."
+        )
+        raise typer.Exit(2)
+    cfg = load_config(config)
+    exchanges = {i.symbol: i.exchange.value for i in cfg.stage1.instruments()}
+    if cfg.cash_sleeve.symbol:
+        exchanges[cfg.cash_sleeve.symbol] = "TSX"  # the cash sleeve is a TSX-listed fund (§7.4)
+    known: dict[str, date] = {}
+    if inceptions.exists():
+        raw = yaml.safe_load(inceptions.read_text(encoding="utf-8")) or {}
+        known = {  # the first trading day where the issuer gives one, else the inception date
+            s: date.fromisoformat(str(v.get("listing") or v["inception"]))
+            for s, v in raw["funds"].items()
+        }
+    start = _parse_date(from_date, date(1990, 1, 1))
+    end = _parse_date(to_date, _utc_now().date())
+    client = EodhdClient(key, secret("VENDOR_BASE_URL") or BASE_URL, data_dir / "raw" / "eodhd")
+    src = EodhdSource(client, exchanges)
+    for sym, exchange in exchanges.items():
+        calendar = cfg.calendars.by_exchange[exchange]
+        try:
+            r = check_fund(src, sym, calendar, known.get(sym), start, end)
+        except EodhdError as exc:
+            typer.echo(f"{sym}: request failed ({exc}); rerun later, cached data is kept")
+            continue
+        per_year = ", ".join(f"{y}: {n}" for y, n in sorted(r.distributions_by_year.items()))
+        splits = ", ".join(f"{d} x{float(x):g}" for d, x in r.splits) or "none"
+        typer.echo(
+            f"{sym} ({src.ticker(sym)}): {r.bars} bars {r.first_bar} to {r.last_bar}; "
+            f"inception {r.inception or 'unknown'}; splits {splits}; distributions per year "
+            f"{per_year or 'none'}"
+        )
+        for g in r.gaps or ["no gaps found"]:
+            typer.echo(f"   - {g}")
+    typer.echo(f"API calls used this run: {client.calls} (cached responses are reused)")
 
 
 @data_app.command("boc-calendar")

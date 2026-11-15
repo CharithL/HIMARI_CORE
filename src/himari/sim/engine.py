@@ -5,8 +5,9 @@ One tick per session close of any traded exchange (XTSE, XNAS), at the daily job
 
 1. The broker runs the session: interest, corporate actions, payments, conversions, then the
    fills of orders planned before today (rule 2: decide after the close of t, execute at t+1).
-2. The ledger books the broker's fills, conversions and interest, then the corporate actions
-   that became known since the last tick (point-in-time data), then pays what is due.
+2. The ledger books the corporate actions that became known since the last tick (point-in-time
+   data), then the broker's fills, conversions and interest, then pays what is due. Actions go
+   first because on an ex-date the broker splits holdings and open orders before it fills.
 3. NAV at the Bank of Canada valuation rate; reconciliation after any activity (§9.5); the
    drawdown state (§8.6); an alert for a distribution unpaid 30 days after its ex-date.
 4. The daily safety check (§8.3) on the current holdings.
@@ -140,9 +141,10 @@ class BacktestSettings:
 
     @property
     def run_name(self) -> str:
-        """Folder and column name: 1x, 2x, 1x-broker-cash, ..."""
+        """Folder and column name: 1x, 2x, 1x-cash-at-the-broker, ... (the label as a slug)."""
         tag = f"{self.cost_multiplier:g}x"
-        return f"{tag}-{self.label.replace(' ', '-')}" if self.label else tag
+        slug = "-".join("".join(c if c.isalnum() else " " for c in self.label.lower()).split())
+        return f"{tag}-{slug}" if slug else tag
 
 
 @dataclass(frozen=True)
@@ -318,6 +320,10 @@ class Backtest:
         now = release_utc(day, self.eod)
         self.clock.advance_to(day, now)
         rep = self.broker.run_session(day)
+        # Corporate actions known by now go in first: on an ex-date the broker splits holdings
+        # and open orders before it fills, so the day's fills are in post-split shares. (A
+        # distribution's entitlement uses the holding before its ex-date either way.)
+        booked = self._book_actions(day, now)
         for det in rep.fills:
             planned = self._planned.get(det.fill.order_id)
             reason = planned.reason if planned else ""
@@ -342,7 +348,6 @@ class Backtest:
             self.ledger.book_interest(posting)
         self.ledger.set_accrued_interest(rep.accrued)
         self.unfilled.extend(rep.unfilled)
-        booked = self._book_actions(day, now)
         paid = self.ledger.collect(day)
         val = self._value(day, now)
         self.broker.mark_nav(val.nav, val.usd_to_cad)
