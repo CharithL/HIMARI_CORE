@@ -67,7 +67,6 @@ DATE_FORMATS = (
     "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",  # ISO, as Excel XML types dates
 )  # fmt: skip
 EMPTY = ("", "-", "–", "—")  # what the tables show for "none"
-TOLERANCE = Decimal("0.00005")  # amounts are published to 5 decimals
 MAX_XLSX_PART_BYTES = 50_000_000  # an uncompressed sheet larger than this is refused
 SERIAL_DATES = (date(1990, 1, 1), date(2100, 1, 1))  # where an XLSX day number may land
 SPREADSHEET_ML = "urn:schemas-microsoft-com:office:spreadsheet"
@@ -368,9 +367,11 @@ class DecemberCheck:
 def compare_december(
     issuer: Sequence[IssuerDistribution], vendor: Sequence[CorporateAction], symbol: str
 ) -> list[DecemberCheck]:
-    """Each December ex-date in either source, with a verdict. `match` means the vendor holds
-    exactly the issuer's cash part (a reinvested part pays nothing, so the vendor should not
-    list it as cash)."""
+    """Each December ex-date in either source, with a verdict. `match` means the vendor's cash
+    on that ex-date equals the issuer's cash part exactly (v1.11; it allowed 0.00005 before): a
+    reinvested part pays nothing, so the vendor should not list it as cash. Only exact matches
+    may be confirmed together (`issuer-check --confirm-matches`); every other row needs its
+    own decision."""
     iss = {d.ex_date: d for d in issuer if d.ex_date.month == 12}
     ven: dict[date, Decimal] = {}
     for a in vendor:
@@ -381,11 +382,11 @@ def compare_december(
         i, v = iss.get(ex), ven.get(ex, Decimal(0))
         if i is None:
             verdict = "issuer_missing"
-        elif abs(v - i.cash) <= TOLERANCE and (v > 0 or i.cash == 0):
+        elif v == i.cash:
             verdict = "match"
-        elif i.reinvested > 0 and abs(v - (i.cash + i.reinvested)) <= TOLERANCE:
+        elif i.reinvested > 0 and v == i.cash + i.reinvested:
             verdict = "reinvested_as_cash"
-        elif v == 0 and i.cash > 0:
+        elif v == 0:
             verdict = "vendor_missing"
         else:
             verdict = "differs"

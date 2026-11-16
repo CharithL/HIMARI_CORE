@@ -8,6 +8,7 @@ before v1.6 have no check and count as Q4/Q7. A confirmation only clears its own
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -27,20 +28,35 @@ class ConfirmationStore:
         confirmed_at_utc: datetime,
         check: str = "Q4",
     ) -> None:
-        if not reason.strip():
-            raise ValueError("a reason is required to confirm an anomaly")
+        self.add_many([(symbol, session_date, reason)], confirmed_at_utc, check)
+
+    def add_many(
+        self,
+        items: Sequence[tuple[str, date, str]],
+        confirmed_at_utc: datetime,
+        check: str,
+    ) -> None:
+        """(symbol, date, reason) confirmations of one check, all validated first and then
+        appended in a single write (v1.11, `issuer-check --confirm-matches`)."""
         if check not in CHECKS:
             raise ValueError(f"check must be one of {', '.join(CHECKS)}")
-        record = {
-            "symbol": symbol,
-            "session_date": session_date.isoformat(),
-            "reason": reason.strip(),
-            "confirmed_at_utc": confirmed_at_utc.isoformat(),
-            "check": check,
-        }
+        lines = []
+        for symbol, session_date, reason in items:
+            if not reason.strip():
+                raise ValueError("a reason is required to confirm an anomaly")
+            record = {
+                "symbol": symbol,
+                "session_date": session_date.isoformat(),
+                "reason": reason.strip(),
+                "confirmed_at_utc": confirmed_at_utc.isoformat(),
+                "check": check,
+            }
+            lines.append(json.dumps(record, sort_keys=True) + "\n")
+        if not lines:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, sort_keys=True) + "\n")
+            f.write("".join(lines))
 
     def confirmed(self, *checks: str) -> dict[str, set[date]]:
         """Symbol -> confirmed dates for the given checks (default: Q4 and Q7)."""

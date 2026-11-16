@@ -11,6 +11,7 @@ import typer
 
 if TYPE_CHECKING:
     from himari.core.config import FrozenConfig
+    from himari.data.issuer_files import DecemberCheck
     from himari.risk.state_machine import SafetyStore
 
 app = typer.Typer(name="himari", help="HIMARI Core: rules-based multi-asset trend following")
@@ -266,9 +267,11 @@ def data_q6(
     config: Path = typer.Option(_default_config_path(), help="Config file"),
 ) -> None:
     """Q6 over the whole window, fund by fund (v1.10): the M6 baseline waits until every fund
-    passes against the IBKR bars. Exits 1 if any fund fails."""
+    passes against the IBKR bars. A session without an IBKR bar passes only if the primary
+    shows zero volume that day, and every such session is listed (v1.11). Exits 1 if any fund
+    fails."""
     from himari.core.config import load_config
-    from himari.data.coverage import cross_check_audit
+    from himari.data.coverage import MISSING_SHOWN, cross_check_audit
     from himari.data.storage import BARS, VersionedStore, frame_bars
 
     cfg = load_config(config)
@@ -288,8 +291,17 @@ def data_q6(
         detail = f"; worst {worst[0]}: {worst[1]} vs {worst[2]}" if worst else ""
         typer.echo(
             f"{'PASS' if a.passed else 'FAIL'} {a.symbol}: {a.shared} shared sessions, "
-            f"{len(a.mismatches)} mismatches, {len(a.missing)} missing{detail}"
+            f"{len(a.mismatches)} mismatches, {len(a.missing)} missing, "
+            f"{len(a.no_trade)} without trades{detail}"
         )
+        if a.no_trade:  # every one listed (v1.11)
+            days = ", ".join(str(d) for d in a.no_trade)
+            typer.echo(f"  zero volume on {primary} and no {crosscheck} bar (allowed): {days}")
+        if a.missing:
+            shown = ", ".join(str(d) for d in a.missing[:MISSING_SHOWN])
+            more = len(a.missing) - MISSING_SHOWN
+            rest = f" and {more} more, the last {a.missing[-1]}" if more > 0 else ""
+            typer.echo(f"  traded on {primary} but no {crosscheck} bar (fails): {shown}{rest}")
     if not all(a.passed for a in audits):
         raise typer.Exit(1)
 
@@ -299,10 +311,16 @@ def data_issuer_check(
     folder: Path = typer.Option(Path("data") / "issuer", help="Saved issuer files (by hand)"),
     primary: str = typer.Option("eodhd", help="Vendor source to compare with"),
     data_dir: Path = typer.Option(Path("data"), help="Data root"),
+    confirm_matches: bool = typer.Option(
+        False, "--confirm-matches", help="Confirm every exact match (Q10) after one y/n question"
+    ),
+    state_dir: Path = typer.Option(Path("state"), help="State root (confirmations)"),
 ) -> None:
     """Q10 helper (v1.10): each CAD fund's December distributions from the issuer files saved
-    by hand, beside the vendor's, with the confirm command for each match. Exits 1 if a file is
-    missing or unreadable, or a December row does not match."""
+    by hand, beside the vendor's, with the confirm command for each exact match. With
+    --confirm-matches (v1.11) the exact matches not yet confirmed are listed and, after one
+    y/n question, recorded together; every other row needs its own `himari data confirm`.
+    Exits 1 if a file is missing or unreadable, or a December row does not match."""
     from himari.data.issuer_files import (
         FUND_ISSUER,
         IssuerFileError,
@@ -319,6 +337,7 @@ def data_issuer_check(
         raise typer.Exit(1) from None
     vendor = frame_actions(VersionedStore(data_dir / "clean").view(ACTIONS), primary)
     ok = True
+    matches: list[tuple[str, DecemberCheck]] = []  # (issuer file name, exact match)
     for sym in FUND_ISSUER:
         if sym not in files:
             typer.echo(f"{sym}: no file in {folder}")
@@ -343,10 +362,52 @@ def data_issuer_check(
                 typer.echo(
                     f'   himari data confirm {sym} {c.ex_date} --check Q10 --reason "{reason}"'
                 )
+                matches.append((files[sym].name, c))
             else:
                 ok = False
+    if confirm_matches:
+        _confirm_exact_matches(matches, primary, state_dir)
     if not ok:
         raise typer.Exit(1)
+
+
+def _confirm_exact_matches(
+    matches: list[tuple[str, DecemberCheck]], primary: str, state_dir: Path
+) -> None:
+    """--confirm-matches (v1.11): one y/n question for every exact match not yet confirmed,
+    then all of them recorded in one write. A row that differs never comes here."""
+    from himari.quality.confirmations import ConfirmationStore
+
+    store = ConfirmationStore(state_dir / "confirmations.jsonl")
+    done = store.confirmed("Q10")
+    todo = [(name, c) for name, c in matches if c.ex_date not in done.get(c.symbol, set())]
+    if len(todo) < len(matches):
+        typer.echo(f"Already confirmed for Q10: {len(matches) - len(todo)} of the exact matches.")
+    if not todo:
+        typer.echo("No exact match left to confirm.")
+        return
+    n = len(todo)
+    typer.echo(f"Exact matches not yet confirmed for Q10 ({n}):")
+    for name, c in todo:
+        typer.echo(
+            f"  {c.symbol} {c.ex_date}: issuer cash {c.issuer_cash}, reinvested "
+            f"{c.issuer_reinvested} ({name}); {primary} cash {c.vendor_cash}"
+        )
+    what = "this row" if n == 1 else f"these {n} rows"
+    if not typer.confirm(f"Record a Q10 confirmation for {what}?", default=False):
+        typer.echo("Nothing recorded.")
+        return
+    reasons = [
+        (
+            c.symbol,
+            c.ex_date,
+            f"issuer file {name}: cash {c.issuer_cash}, reinvested {c.issuer_reinvested}; "
+            f"{primary} cash {c.vendor_cash}; exact match, confirmed with --confirm-matches",
+        )
+        for name, c in todo
+    ]
+    store.add_many(reasons, _utc_now(), "Q10")
+    typer.echo(f"Recorded {n} Q10 confirmation{'' if n == 1 else 's'} in {store.path}.")
 
 
 @data_app.command("coverage")

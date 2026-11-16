@@ -2,10 +2,14 @@
 
 VENV := .venv
 UV := uv
+# mypy's pure-Python build at this pinned version: Windows application control blocks
+# the compiled library in mypy's standard wheel on the project PC (README, Setup note)
+MYPY_VERSION := 1.20.2
 
 setup:
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install -e ".[dev]"
+	$(UV) pip install --reinstall-package mypy --no-binary mypy "mypy==$(MYPY_VERSION)"
 	$(UV) pip freeze > requirements-lock.txt
 
 lint:

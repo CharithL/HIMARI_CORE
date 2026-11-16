@@ -81,12 +81,15 @@ def check_fund(
 @dataclass(frozen=True)
 class CrossAudit:
     """Q6 over a whole window for one fund (v1.10: the baseline waits until every fund passes
-    against the IBKR bars)."""
+    against the IBKR bars). v1.11: a session without a cross-check bar passes only when the
+    primary shows zero volume that day (no trades, so no bar is expected), and every such
+    session is listed; any other missing bar fails."""
 
     symbol: str
     shared: int  # primary sessions in the window that the cross-check also has
     mismatches: list[tuple[date, float, float]]  # session, primary close, cross-check close
-    missing: list[date]  # primary sessions in the window without a cross-check bar
+    missing: list[date]  # primary sessions with volume but no cross-check bar: these fail
+    no_trade: list[date]  # primary sessions with zero volume and no cross-check bar: allowed
 
     @property
     def passed(self) -> bool:
@@ -102,24 +105,26 @@ def cross_check_audit(
     tol: float,
 ) -> list[CrossAudit]:
     """Every primary close in [start, end] against the cross-check's close on the same session,
-    with Q6's tolerance; a session the cross-check lacks counts as missing."""
+    with Q6's tolerance. A session the cross-check lacks is allowed only when the primary bar
+    has zero volume (v1.11); otherwise it is missing."""
     out = []
     for sym in symbols:
         cross = {b.session_date: b.close for b in crosscheck.get(sym, [])}
         mismatches: list[tuple[date, float, float]] = []
         missing: list[date] = []
+        no_trade: list[date] = []
         shared = 0
         for b in sorted(primary.get(sym, []), key=lambda x: x.session_date):
             if not start <= b.session_date <= end:
                 continue
             c = cross.get(b.session_date)
             if c is None:
-                missing.append(b.session_date)
+                (no_trade if b.volume == 0 else missing).append(b.session_date)
                 continue
             shared += 1
             if not c > 0 or abs(b.close / c - 1.0) > tol:
                 mismatches.append((b.session_date, b.close, c))
-        out.append(CrossAudit(sym, shared, mismatches, missing))
+        out.append(CrossAudit(sym, shared, mismatches, missing, no_trade))
     return out
 
 

@@ -3,13 +3,14 @@ each cell in its own column, refused when they are not what the issuers' pages s
 compared with the vendor's December rows."""
 
 import io
+import json
 import zipfile
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from himari.cli import app
 from himari.core.types import CorporateAction
@@ -19,6 +20,7 @@ from himari.data.issuer_files import (
     find_issuer_files,
     read_issuer_file,
 )
+from himari.data.storage import ACTIONS, VersionedStore, action_row
 
 D = Decimal
 VANGUARD_CSV = """Type,Ex-dividend date,Record date,Payment date,Cash distribution per unit,\
@@ -217,6 +219,8 @@ def test_december_verdicts(tmp_path: Path) -> None:
         return [c.verdict for c in compare_december(issuer, vendor, "VCN")]
 
     assert verdict([cash(dec, "0.38809")]) == ["match"]
+    assert verdict([cash(dec, "0.388090")]) == ["match"]  # the same number
+    assert verdict([cash(dec, "0.38810")]) == ["differs"]  # v1.11: a match is exact
     assert verdict([cash(dec, "0.73803")]) == ["reinvested_as_cash"]  # 0.38809 + 0.34994
     assert verdict([]) == ["vendor_missing"]
     assert verdict([cash(dec, "0.5")]) == ["differs"]
@@ -245,3 +249,51 @@ def test_issuer_check_refuses_two_files_for_one_fund(tmp_path: Path) -> None:
     )
     assert isinstance(result.exception, SystemExit) and result.exit_code == 1
     assert "two files for VCN: VCN.csv and VCN.html" in result.output
+
+
+def eodhd_cash(data_dir: Path, *rows: tuple[date, str]) -> None:
+    """EODHD cash distributions for VCN, in the store `issuer-check` reads."""
+    t = datetime(2026, 1, 1, tzinfo=UTC)
+    actions = [CorporateAction(symbol="VCN", ex_date=d, action_type="cash", amount=D(a),
+                               source="eodhd") for d, a in rows]  # fmt: skip
+    VersionedStore(data_dir / "clean").append(ACTIONS, [action_row(a, t) for a in actions], t)
+
+
+def confirm_matches(tmp_path: Path, answer: str) -> Result:
+    args = ["data", "issuer-check", "--folder", str(tmp_path / "issuer"), "--data-dir",
+            str(tmp_path), "--state-dir", str(tmp_path / "state"), "--confirm-matches"]  # fmt: skip
+    return CliRunner().invoke(app, args, input=answer)
+
+
+def test_confirm_matches_records_the_exact_matches_after_one_question(tmp_path: Path) -> None:
+    """v1.11: the exact match is listed and recorded after one "y"; the row that differs (by
+    0.00001) is never part of the batch, and a second run asks nothing."""
+    (tmp_path / "issuer").mkdir()
+    dec2024 = "Income,Dec 30 2024,Dec 30 2024,Jan 07 2025,$0.40000,—,$0.40000\n"
+    write(tmp_path / "issuer", "VCN.csv", VANGUARD_CSV + dec2024)
+    eodhd_cash(tmp_path, (date(2025, 12, 30), "0.38809"), (date(2024, 12, 30), "0.40001"))
+    result = confirm_matches(tmp_path, "y\n")
+    assert "VCN 2024-12-30: issuer cash 0.40000, reinvested 0; vendor cash 0.40001: differs" in (
+        result.output
+    )
+    assert "Exact matches not yet confirmed for Q10 (1):" in result.output
+    assert "Record a Q10 confirmation for this row?" in result.output
+    lines = (tmp_path / "state" / "confirmations.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in lines]
+    assert [(r["symbol"], r["session_date"], r["check"]) for r in records] == [
+        ("VCN", "2025-12-30", "Q10"),
+    ]  # fmt: skip
+    assert "eodhd cash 0.38809; exact match" in records[0]["reason"]
+    again = confirm_matches(tmp_path, "")
+    assert "Already confirmed for Q10: 1 of the exact matches." in again.output
+    assert "Record a Q10" not in again.output
+
+
+def test_confirm_matches_records_nothing_on_no(tmp_path: Path) -> None:
+    (tmp_path / "issuer").mkdir()
+    write(tmp_path / "issuer", "VCN.csv", VANGUARD_CSV)
+    eodhd_cash(tmp_path, (date(2025, 12, 30), "0.38809"))
+    result = confirm_matches(tmp_path, "n\n")
+    assert "Record a Q10 confirmation for this row?" in result.output
+    assert "Nothing recorded." in result.output
+    assert not (tmp_path / "state" / "confirmations.jsonl").exists()

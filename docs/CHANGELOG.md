@@ -4,6 +4,30 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
+### Amendment v1.11: Q6 sessions without trades, batch Q10 confirmations (2026-11-15, approved by the user)
+- 1 (§6 Q6): `himari data q6` allows a missing IBKR bar only on a session where EODHD shows zero
+  volume (no trades, so no bar is expected) and lists every such session per fund ("zero volume
+  on eodhd and no ibkr bar (allowed): ..."); any other missing IBKR bar fails, shown with the
+  first five dates, the count and the last date (`CrossAudit.no_trade`).
+- 2 (§6 Q10, §15): `himari data issuer-check --confirm-matches` lists every December row where
+  the issuer file and EODHD agree exactly and that is not yet confirmed, asks once (y/N, no by
+  default), then records them all in one write (`ConfirmationStore.add_many`, every record
+  validated first). Each reason names the issuer file and both amounts. A row that differs is
+  never in the batch, and a second run skips the rows already confirmed. To confirm: a `match`
+  in the plain listing is exact too (v1.10 allowed 0.00005), so the per-row confirm commands
+  appear only for exact matches.
+- 3 (tooling): mypy 1.20.2 is installed as its pure-Python build (`mypy --version` ends in
+  "compiled: no"), because Windows application control blocks the compiled library in mypy's
+  standard wheel on the project PC. `make setup` reinstalls it that way (`MYPY_VERSION` in the
+  Makefile) and the README's setup section explains why. No Windows setting was changed. CI on
+  Linux keeps the standard wheel.
+- 4: the IBKR pricing plan and the account size come with the EODHD key;
+  `account.initial_nav_cad` stays at the 100,000 placeholder.
+- Tests: two new Q6 tests (the zero-volume rule and the report lines) and two new
+  `--confirm-matches` tests ("y" records only the exact match and a second run asks nothing;
+  "n" records nothing), plus exact-match verdict cases. Frozen config hash unchanged
+  (`0f7fd7a1…`).
+
 ### Amendment v1.10: IBKR cross-check, issuer files, baseline order (2026-11-15, approved by the user)
 - 1 (§12.3): benchmark 2's reading is approved wording: every signal on, everything else
   unchanged.
