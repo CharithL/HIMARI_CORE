@@ -4,7 +4,52 @@ All notable changes to HIMARI Core are documented here.
 
 ## [Unreleased]
 
-### Amendment v1.9 and M6 preparation (2026-11-16, approved by the user)
+### Amendment v1.10: IBKR cross-check, issuer files, baseline order (2026-11-15, approved by the user)
+- 1 (§12.3): benchmark 2's reading is approved wording: every signal on, everything else
+  unchanged.
+- 2 (§5.2, §6 Q6): the cross-check is IBKR's daily bars for all nine funds. `data/ibkr.py`:
+  `IbkrSource` behind a small `HistoricalBars` protocol, tested with a fake TWS, and
+  `IbAsyncBars` for TWS or IB Gateway (ib_async, read-only; a contract is resolved by symbol,
+  primary exchange and currency and must match exactly once; the first bar comes from
+  `reqHeadTimeStamp`; daily TRADES bars in regular hours). IBKR adjusts TRADES bars for splits
+  but not for distributions, so the adapter multiplies the prices before each split by its
+  ratio (and divides the volume) using EODHD's split records; a wrong or missing EODHD split
+  then shows up as Q6 mismatches instead of being hidden. `himari data update --source ibkr`
+  needs EODHD's records first and the connection settings in `.env`, and prints each fund's
+  first IBKR bar. `himari data q6` (`coverage.cross_check_audit`) compares every primary close
+  in the window with IBKR's for the same session (0.5%) and exits 1 if any fund fails. To
+  confirm: a session without an IBKR bar fails the audit, since it is unchecked (§6 treats an
+  older missing cross-check as a warning).
+- Order (§16 M6): `himari data update --source eodhd` and the quality checks can run on EODHD
+  alone; the baseline backtest waits until `himari data q6` passes for every fund.
+- Q10 (§6, §20): `data/issuer_files.py` reads the distribution histories the user downloads by
+  hand into `data/issuer/` (gitignored), one file per fund named by symbol: CSV, XLSX, Excel
+  2003 XML or a saved web page. It finds the table by the column headers the issuers' pages
+  show and reads every cell at its own column: spreadsheets leave empty cells out and HTML may
+  leave end tags out, and either would otherwise move a reinvested amount into the cash column
+  (and could make a vendor that lists it as cash look confirmed). XLSX day numbers are read in
+  the workbook's own date system. It refuses binary .xls files, XML with a DTD or entity
+  declarations, unknown headers, dates or distribution types, and decimal commas. `himari data
+  issuer-check` prints each December distribution beside EODHD's with a verdict (`match`,
+  `reinvested_as_cash`, `vendor_missing`, `issuer_missing`, `differs`) and the
+  `himari data confirm ... --check Q10` command for each match; confirming stays a person's
+  decision. How a `reinvested_as_cash` row is corrected in the store is settled once EODHD's
+  records are in.
+- IBKR documentation, read on 15 November 2026: market data needs a funded account (at least
+  USD 500 of equity, or it is turned off) plus the subscription fees (non-professional: TSX
+  Level 1 CAD 9.00 and NASDAQ Level 1 USD 1.50 a month); the paper account uses the live
+  account's subscriptions once sharing is turned on. How far back daily bars go is not
+  published: it differs by contract, and `reqHeadTimeStamp` gives each fund's first bar.
+- 5 (§16 M7): during M7, check whether IBKR's daily data could replace the EODHD subscription
+  for daily updates. Nothing changed now.
+- Correction: v1.9 is dated 15 November 2026 here, in the guide, in `docs/m6_data_sources.md`
+  and in `config/fund_inceptions.yaml`; it had been written as 16 November.
+- Still open: the IBKR pricing plan and the account size (`account.initial_nav_cad` stays at
+  the 100,000 placeholder).
+- Tests: `test_ibkr.py` (6), `test_q6_audit.py` (4), `test_issuer_files.py` (19); 496 pass.
+  Frozen config hash unchanged (`0f7fd7a1…`).
+
+### Amendment v1.9 and M6 preparation (2026-11-15, approved by the user)
 - B (§12.4, §12.7, amends a frozen rule): DSR is reported, not judged. "DSR >= 0.95" leaves the
   research gate; the research report's first page shows DSR at the ledger's real-data trial
   count and at N = 10 to 10,000, with PSR(0), MinTRL and the caveat that 11 years cannot prove a

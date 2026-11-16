@@ -13,7 +13,11 @@ from-inception check needs the paid plan; on the free plan every fund would show
 
 ## Cross-check source (§5.2): options for the user to pick
 
-Checked on 16 November 2026 on each site's own pages and terms.
+Checked on 15 November 2026 on each site's own pages and terms.
+
+**Chosen (v1.10 review): IBKR daily bars for all nine funds**, once the account and its TSX and
+NASDAQ Level 1 data are live. The issuers' pages are used by hand only, for Q10 (the list of
+files and the folder are in `src/himari/data/issuer_files.py`).
 
 | Option | What it gives | Cost | Terms (personal use) | Gaps |
 |---|---|---|---|---|
@@ -49,7 +53,8 @@ personal (non-professional) use, as the vendor shows them.
   (the eight ETFs and CBIL) is covered from its own inception has to be checked symbol by
   symbol on a trial or first-month key before the baseline. None is assumed here.
 - §5.2 needs two independent price sources: the chosen vendor as primary and a cross-check
-  (a second vendor, or IBKR for recent history only, which needs market-data subscriptions).
+  (a second vendor, or IBKR's daily bars, which need market-data subscriptions; *(v1.10)* IBKR
+  was chosen).
 
 ## Sources
 

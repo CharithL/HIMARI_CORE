@@ -1,5 +1,5 @@
 # Fund inception and listing (first trading) dates, from each issuer's product page, checked on
-# 16 November 2026. `himari data coverage` compares each source's first bar with the listing
+# 15 November 2026. `himari data coverage` compares each source's first bar with the listing
 # date where the issuer gives one, else with the inception date. Reference data, not parameters.
 funds:
   VCN:

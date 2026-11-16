@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from himari.data.calendars import sessions
 
 if TYPE_CHECKING:
+    from himari.core.types import Bar
     from himari.data.sources import DataSource
 
 MISSING_SHOWN = 5  # missing sessions listed by date; the rest are counted
@@ -75,6 +76,51 @@ def check_fund(
         gaps.append("no cash distributions in the window (check the issuer's history)")
     return FundCoverage(symbol, inception, first, last, len(bars), missing, zero, dict(dists),
                         splits, gaps)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class CrossAudit:
+    """Q6 over a whole window for one fund (v1.10: the baseline waits until every fund passes
+    against the IBKR bars)."""
+
+    symbol: str
+    shared: int  # primary sessions in the window that the cross-check also has
+    mismatches: list[tuple[date, float, float]]  # session, primary close, cross-check close
+    missing: list[date]  # primary sessions in the window without a cross-check bar
+
+    @property
+    def passed(self) -> bool:
+        return self.shared > 0 and not self.mismatches and not self.missing
+
+
+def cross_check_audit(
+    primary: Mapping[str, Sequence[Bar]],
+    crosscheck: Mapping[str, Sequence[Bar]],
+    symbols: Sequence[str],
+    start: date,
+    end: date,
+    tol: float,
+) -> list[CrossAudit]:
+    """Every primary close in [start, end] against the cross-check's close on the same session,
+    with Q6's tolerance; a session the cross-check lacks counts as missing."""
+    out = []
+    for sym in symbols:
+        cross = {b.session_date: b.close for b in crosscheck.get(sym, [])}
+        mismatches: list[tuple[date, float, float]] = []
+        missing: list[date] = []
+        shared = 0
+        for b in sorted(primary.get(sym, []), key=lambda x: x.session_date):
+            if not start <= b.session_date <= end:
+                continue
+            c = cross.get(b.session_date)
+            if c is None:
+                missing.append(b.session_date)
+                continue
+            shared += 1
+            if not c > 0 or abs(b.close / c - 1.0) > tol:
+                mismatches.append((b.session_date, b.close, c))
+        out.append(CrossAudit(sym, shared, mismatches, missing))
+    return out
 
 
 def check_coverage(

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import typer
 
 if TYPE_CHECKING:
+    from himari.core.config import FrozenConfig
     from himari.risk.state_machine import SafetyStore
 
 app = typer.Typer(name="himari", help="HIMARI Core: rules-based multi-asset trend following")
@@ -52,7 +53,7 @@ def config_hash_cmd(
 
 @data_app.command("update")
 def data_update(
-    source: str = typer.Option(..., help="Source: csv|boc|vendor|ibkr"),
+    source: str = typer.Option(..., help="Source: csv|boc|eodhd|ibkr"),
     from_date: str = typer.Option(None, "--from", help="Start date YYYY-MM-DD"),
     to_date: str = typer.Option(None, "--to", help="End date YYYY-MM-DD (default today)"),
     csv_dir: Path = typer.Option(None, "--dir", help="CSV root (bars/, actions/, series/)"),
@@ -77,19 +78,15 @@ def data_update(
     from himari.data.storage import AppendResult, RawStore, VersionedStore
 
     if source == "vendor":
-        typer.echo(
-            "The vendor is EODHD (v1.9); ingesting it is M6. Check its coverage first with "
-            "`himari data coverage`.",
-            err=True,
-        )
+        typer.echo("The vendor is EODHD (v1.9): use --source eodhd.", err=True)
         raise typer.Exit(1)
-    if source == "ibkr":
-        typer.echo("IBKR data arrives in M7.", err=True)
-        raise typer.Exit(1)
-    if source not in ("csv", "boc"):
+    if source not in ("csv", "boc", "eodhd", "ibkr"):
         raise typer.BadParameter(f"unknown source {source!r}")
 
     cfg = load_config(config)
+    if source in ("eodhd", "ibkr"):  # M6: the primary (EODHD) and its cross-check (IBKR, v1.10)
+        _update_market_source(source, cfg, from_date, to_date, data_dir)
+        return
     start = _parse_date(from_date, date(2000, 1, 1))
     end = _parse_date(to_date, _utc_now().date())
     store = VersionedStore(data_dir / "clean")
@@ -189,6 +186,169 @@ def data_check(
             typer.echo(f"  portfolio {r.check} {r.severity.value} {r.detail}")
 
 
+def _fund_exchanges(cfg: FrozenConfig) -> dict[str, str]:
+    """The nine funds: the eight risk funds and the cash sleeve, with their listing exchange."""
+    exchanges = {i.symbol: i.exchange.value for i in cfg.stage1.instruments()}
+    if cfg.cash_sleeve.symbol:
+        exchanges[cfg.cash_sleeve.symbol] = "TSX"  # the cash sleeve is a TSX-listed fund (§7.4)
+    return exchanges
+
+
+def _update_market_source(
+    source: str, cfg: FrozenConfig, from_date: str | None, to_date: str | None, data_dir: Path
+) -> None:
+    """Bars and actions from EODHD, or bars from IBKR (split-reversed with the stored EODHD
+    splits), into versioned storage for the nine funds."""
+    from himari.core.secrets import secret
+    from himari.data.ingest import ingest_actions, ingest_bars
+    from himari.data.storage import ACTIONS, VersionedStore, frame_actions
+
+    exchanges = _fund_exchanges(cfg)
+    symbols = list(exchanges)
+    start = _parse_date(from_date, date(1990, 1, 1))
+    end = _parse_date(to_date, _utc_now().date())
+    store = VersionedStore(data_dir / "clean")
+    observed, eod = _utc_now(), time.fromisoformat(cfg.schedule.daily_job_after_et)
+    if source == "eodhd":
+        from himari.data.eodhd import BASE_URL, EodhdClient, EodhdSource
+
+        key = secret("VENDOR_API_KEY")
+        if not key:
+            typer.echo("VENDOR_API_KEY is not set: put it in .env (gitignored, §18).")
+            raise typer.Exit(2)
+        base = secret("VENDOR_BASE_URL") or BASE_URL
+        client = EodhdClient(key, base, data_dir / "raw" / "eodhd")
+        vendor = EodhdSource(client, exchanges)
+        bars = ingest_bars(vendor, store, symbols, start, end, observed, eod)
+        actions = ingest_actions(vendor, store, symbols, start, end, observed, eod)
+        for sym in symbols:
+            b, a = bars[sym], actions[sym]
+            typer.echo(
+                f"{sym}: bars +{b.added} ({b.corrected} corrected), "
+                f"actions +{a.added} ({a.corrected} corrected)"
+            )
+        typer.echo(f"API calls used: {client.calls}")
+        return
+    known = frame_actions(store.view(ACTIONS), "eodhd")
+    if not known:
+        typer.echo("Ingest EODHD first: its splits are needed to undo IBKR's split adjustment.")
+        raise typer.Exit(2)
+    splits = {
+        s: [(a.ex_date, a.amount) for a in acts if a.action_type == "split"]
+        for s, acts in known.items()
+    }
+    try:
+        from himari.data.ibkr import IbAsyncBars, IbkrSource
+
+        host, port, client_id = secret("IBKR_HOST"), secret("IBKR_PORT"), secret("IBKR_CLIENT_ID")
+        if not (host and port and client_id):
+            typer.echo("Set IBKR_HOST, IBKR_PORT and IBKR_CLIENT_ID in .env (§18).")
+            raise typer.Exit(2)
+        tws = IbAsyncBars(host, int(port), int(client_id))
+    except ImportError:
+        typer.echo("IBKR needs the broker extra: uv pip install -e .[broker]")
+        raise typer.Exit(2) from None
+    ibkr = IbkrSource(tws, exchanges, lambda s: splits.get(s, []))
+    bars = ingest_bars(ibkr, store, symbols, start, end, observed, eod)
+    for sym in symbols:
+        typer.echo(
+            f"{sym}: bars +{bars[sym].added}; IBKR's earliest daily bar {ibkr.earliest(sym)}"
+        )
+
+
+@data_app.command("q6")
+def data_q6(
+    primary: str = typer.Option("eodhd", help="Primary source name"),
+    crosscheck: str = typer.Option("ibkr", help="Cross-check source name"),
+    from_date: str = typer.Option(None, "--from", help="Window start (default 2014-01-01)"),
+    to_date: str = typer.Option(None, "--to", help="Window end (default 2025-12-31)"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root"),
+    config: Path = typer.Option(_default_config_path(), help="Config file"),
+) -> None:
+    """Q6 over the whole window, fund by fund (v1.10): the M6 baseline waits until every fund
+    passes against the IBKR bars. Exits 1 if any fund fails."""
+    from himari.core.config import load_config
+    from himari.data.coverage import cross_check_audit
+    from himari.data.storage import BARS, VersionedStore, frame_bars
+
+    cfg = load_config(config)
+    store = VersionedStore(data_dir / "clean")
+    view = store.view(BARS)
+    audits = cross_check_audit(
+        frame_bars(view, primary),
+        frame_bars(view, crosscheck),
+        list(_fund_exchanges(cfg)),
+        _parse_date(from_date, date(2014, 1, 1)),
+        _parse_date(to_date, date(2025, 12, 31)),
+        cfg.data_quality.cross_source_tol,
+    )
+    for a in audits:
+        worst = max(a.mismatches, key=lambda m: abs(m[1] / m[2] - 1.0) if m[2] else 1.0,
+                    default=None)  # fmt: skip
+        detail = f"; worst {worst[0]}: {worst[1]} vs {worst[2]}" if worst else ""
+        typer.echo(
+            f"{'PASS' if a.passed else 'FAIL'} {a.symbol}: {a.shared} shared sessions, "
+            f"{len(a.mismatches)} mismatches, {len(a.missing)} missing{detail}"
+        )
+    if not all(a.passed for a in audits):
+        raise typer.Exit(1)
+
+
+@data_app.command("issuer-check")
+def data_issuer_check(
+    folder: Path = typer.Option(Path("data") / "issuer", help="Saved issuer files (by hand)"),
+    primary: str = typer.Option("eodhd", help="Vendor source to compare with"),
+    data_dir: Path = typer.Option(Path("data"), help="Data root"),
+) -> None:
+    """Q10 helper (v1.10): each CAD fund's December distributions from the issuer files saved
+    by hand, beside the vendor's, with the confirm command for each match. Exits 1 if a file is
+    missing or unreadable, or a December row does not match."""
+    from himari.data.issuer_files import (
+        FUND_ISSUER,
+        IssuerFileError,
+        compare_december,
+        find_issuer_files,
+        read_issuer_file,
+    )
+    from himari.data.storage import ACTIONS, VersionedStore, frame_actions
+
+    try:
+        files = find_issuer_files(folder)
+    except IssuerFileError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from None
+    vendor = frame_actions(VersionedStore(data_dir / "clean").view(ACTIONS), primary)
+    ok = True
+    for sym in FUND_ISSUER:
+        if sym not in files:
+            typer.echo(f"{sym}: no file in {folder}")
+            ok = False
+            continue
+        try:
+            rows = read_issuer_file(files[sym], sym)
+        except IssuerFileError as exc:
+            typer.echo(f"{sym}: {exc}")
+            ok = False
+            continue
+        for c in compare_december(rows, vendor.get(sym, []), sym):
+            typer.echo(
+                f"{sym} {c.ex_date}: issuer cash {c.issuer_cash}, reinvested "
+                f"{c.issuer_reinvested}; vendor cash {c.vendor_cash}: {c.verdict}"
+            )
+            if c.verdict == "match":
+                reason = (
+                    f"issuer file {files[sym].name}: cash {c.issuer_cash}, "
+                    f"reinvested {c.issuer_reinvested}"
+                )
+                typer.echo(
+                    f'   himari data confirm {sym} {c.ex_date} --check Q10 --reason "{reason}"'
+                )
+            else:
+                ok = False
+    if not ok:
+        raise typer.Exit(1)
+
+
 @data_app.command("coverage")
 def data_coverage(
     source: str = typer.Option("eodhd", help="Price source to check (eodhd)"),
@@ -220,9 +380,7 @@ def data_coverage(
         )
         raise typer.Exit(2)
     cfg = load_config(config)
-    exchanges = {i.symbol: i.exchange.value for i in cfg.stage1.instruments()}
-    if cfg.cash_sleeve.symbol:
-        exchanges[cfg.cash_sleeve.symbol] = "TSX"  # the cash sleeve is a TSX-listed fund (§7.4)
+    exchanges = _fund_exchanges(cfg)
     known: dict[str, date] = {}
     if inceptions.exists():
         raw = yaml.safe_load(inceptions.read_text(encoding="utf-8")) or {}
